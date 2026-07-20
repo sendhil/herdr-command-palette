@@ -483,6 +483,18 @@ impl PaletteCatalog {
         parse_query(raw)
     }
 
+    /// Whether this item is the workspace, tab, or agent the session is currently focused on.
+    pub fn is_focused(&self, id: &PaletteItemId) -> bool {
+        match id {
+            PaletteItemId::Workspace(workspace_id) => {
+                self.focused_workspace_id.as_deref() == Some(workspace_id)
+            }
+            PaletteItemId::Tab(tab_id) => self.focused_tab_id.as_deref() == Some(tab_id),
+            PaletteItemId::Agent(pane_id) => self.focused_pane_id.as_deref() == Some(pane_id),
+            PaletteItemId::Command(_) => false,
+        }
+    }
+
     pub fn rank(&self, raw_query: &str) -> Vec<RankedPaletteItem> {
         let parsed = self.parse_query(raw_query);
         let candidates = self.candidates(parsed.scope);
@@ -558,6 +570,18 @@ impl PaletteCatalog {
         match scope {
             PaletteScope::Default => {
                 let mut ordered = Vec::with_capacity(8);
+                // Blocked agents need attention before anything else, including the focused
+                // chain: an empty query is a "what should I look at" browse.
+                self.push_matching(&mut ordered, |item| {
+                    matches!(
+                        item,
+                        PaletteItem::Entity(EntityItem {
+                            kind: EntityKind::Agent,
+                            status: AgentStatus::Blocked,
+                            ..
+                        })
+                    )
+                });
                 self.push_focused(&mut ordered, |item| {
                     matches!(item, PaletteItem::Entity(EntityItem { kind: EntityKind::Workspace, id: PaletteItemId::Workspace(id), .. }) if self.focused_workspace_id.as_deref() == Some(id))
                 });
@@ -620,7 +644,9 @@ impl PaletteCatalog {
 
     fn push_focused(&self, ordered: &mut Vec<usize>, matches: impl Fn(&PaletteItem) -> bool) {
         if let Some(index) = self.items.iter().position(|record| matches(&record.item)) {
-            ordered.push(index);
+            if !ordered.contains(&index) {
+                ordered.push(index);
+            }
         }
     }
 
@@ -1329,6 +1355,35 @@ mod tests {
         agent.terminal_title_stripped = terminal_title_stripped.map(str::to_owned);
         agent.title = title.map(str::to_owned);
         agent
+    }
+
+    #[test]
+    fn empty_query_ranks_blocked_agents_before_the_focused_chain() {
+        let (mut runtime, _, _) = inputs();
+        let builder = runtime
+            .session
+            .agents
+            .iter_mut()
+            .find(|agent| agent.name.as_deref() == Some("builder"))
+            .expect("fixture has the non-focused builder agent");
+        builder.agent_status = AgentStatus::Blocked;
+        let catalog = PaletteCatalog::new(&runtime, &[], &[]);
+
+        let ranked = catalog.rank("");
+        assert_eq!(ranked[0].id, PaletteItemId::Agent("pane-d".into()));
+        assert_eq!(ranked[1].id, PaletteItemId::Workspace("ws-1".into()));
+
+        // Typed queries keep pure relevance ordering: blocked status must not reorder them.
+        let (unblocked_runtime, _, _) = inputs();
+        let unblocked = PaletteCatalog::new(&unblocked_runtime, &[], &[]);
+        let queried_ids = |catalog: &PaletteCatalog| {
+            catalog
+                .rank("docs")
+                .into_iter()
+                .map(|ranked| ranked.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(queried_ids(&catalog), queried_ids(&unblocked));
     }
 
     #[test]

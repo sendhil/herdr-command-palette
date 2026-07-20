@@ -5,7 +5,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::command::{
     ArgumentDefault, ArgumentKey, ArgumentKind, ArgumentStep, CommandId, CommandSpec,
 };
-use crate::registry::RankedPaletteItem;
+use crate::registry::{PaletteItemId, RankedPaletteItem};
 
 /// The largest text value accepted from interactive input. Defaults are intentionally exempt:
 /// they are retained exactly so submitting an untouched form never changes its argument.
@@ -277,10 +277,26 @@ pub struct PaletteState {
     pub values: BTreeMap<ArgumentKey, ArgumentValue>,
     pub error: Option<String>,
     pub loading: LoadingState,
+    /// Ranked-result counts per palette section, maintained alongside `ranked` so headers
+    /// never rescan the full ranking during layout or render.
+    pub live_results: usize,
+    pub command_results: usize,
+}
+
+fn count_sources(ranked: &[RankedPaletteItem]) -> (usize, usize) {
+    ranked
+        .iter()
+        .fold((0, 0), |(live, commands), item| match item.id {
+            PaletteItemId::Command(_) => (live, commands + 1),
+            PaletteItemId::Workspace(_) | PaletteItemId::Tab(_) | PaletteItemId::Agent(_) => {
+                (live + 1, commands)
+            }
+        })
 }
 
 impl PaletteState {
     pub fn new(ranked: Vec<RankedPaletteItem>) -> Self {
+        let (live_results, command_results) = count_sources(&ranked);
         Self {
             query: TextBuffer::new(),
             ranked,
@@ -290,6 +306,8 @@ impl PaletteState {
             values: BTreeMap::new(),
             error: None,
             loading: LoadingState::Ready,
+            live_results,
+            command_results,
         }
     }
 
@@ -300,6 +318,9 @@ impl PaletteState {
     }
 
     pub fn set_ranked(&mut self, ranked: Vec<RankedPaletteItem>) {
+        let (live_results, command_results) = count_sources(&ranked);
+        self.live_results = live_results;
+        self.command_results = command_results;
         self.ranked = ranked;
         self.selected = 0;
         self.scroll_offset = 0;

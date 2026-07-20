@@ -537,7 +537,7 @@ fn rename_focused_agent_failure_retains_submitted_name_and_visible_error() {
                 .map(|cell| cell.symbol())
                 .collect::<String>();
             assert!(
-                rendered.contains("failed while running Herdr: renam…"),
+                rendered.contains("✗ failed while running Herdr: ren…"),
                 "{rendered:?}"
             );
             saw_failure = true;

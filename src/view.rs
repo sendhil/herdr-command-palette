@@ -1,15 +1,21 @@
+use std::cell::RefCell;
+
+use nucleo_matcher::{
+    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
+    Matcher, Utf32Str,
+};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Paragraph},
     Frame,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     command::{ArgumentKey, ArgumentKind},
-    model::RuntimeSnapshot,
+    model::{AgentStatus, RuntimeSnapshot},
     registry::{
         parse_query, EntityItem, EntityKind, PaletteCatalog, PaletteItem, PaletteScope,
         PaletteSource,
@@ -23,9 +29,17 @@ const RULE: Color = Color::Rgb(41, 64, 68);
 const TEXT: Color = Color::Rgb(216, 227, 228);
 const MUTED: Color = Color::Rgb(113, 130, 134);
 const TEAL: Color = Color::Rgb(70, 217, 194);
-const SELECTED: Color = Color::Rgb(18, 97, 92);
+const SELECTED: Color = Color::Rgb(27, 42, 45);
+const SELECTED_TEXT: Color = Color::Rgb(239, 255, 252);
+const WORKING: Color = Color::Rgb(126, 231, 135);
+const DONE: Color = Color::Rgb(121, 192, 255);
 const WARNING: Color = Color::Rgb(255, 198, 109);
 const ERROR: Color = Color::Rgb(255, 123, 114);
+
+/// Rows narrower than this drop the right-hand metadata column to a bare status glyph.
+const FULL_METADATA_MIN_WIDTH: usize = 44;
+/// Left gutter (selection bar) plus the kind sigil column, in cells.
+const ROW_INDENT: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteRenderRow {
@@ -115,7 +129,6 @@ fn search_rows(
     if body.width == 0 || body.y >= bottom {
         return (Vec::new(), LayoutStats::default());
     }
-    let row_height = if detailed { 2 } else { 1 };
     let mut rows = Vec::new();
     let mut y = body.y;
     let parsed = parse_query(state.query.text());
@@ -151,6 +164,16 @@ fn search_rows(
             y = y.saturating_add(1);
             last_source = Some(source);
         }
+        // A row is one line unless the wide layout has a real second line to show: a command
+        // description or an entity breadcrumb. Status renders inline, so it costs no height.
+        let row_height = if detailed {
+            match item {
+                PaletteItem::Command(command) => 1 + u16::from(command.description.is_some()),
+                PaletteItem::Entity(entity) => 1 + u16::from(!entity.breadcrumb.is_empty()),
+            }
+        } else {
+            1
+        };
         if y.saturating_add(row_height) > bottom {
             break;
         }
@@ -223,26 +246,10 @@ pub fn render(
         return;
     }
     let layout = compute_layout(area, state, registry);
-    // Build the border title directly from bounded pieces: a workspace label is external
-    // metadata and must never be formatted into an unbounded intermediate string.
-    let title_width = usize::from(area.width.saturating_sub(2));
-    let title = runtime
-        .and_then(|snapshot| snapshot.focused_workspace())
-        .map_or_else(
-            || truncate_parts(&[" COMMAND PALETTE "], title_width),
-            |workspace| {
-                truncate_parts(
-                    &[" COMMAND PALETTE · ", workspace.label.as_str(), " "],
-                    title_width,
-                )
-            },
-        );
+    // The host frames the palette pane, so the palette itself stays borderless: a shell-toned
+    // panel with a one-cell margin that the layout already reserves.
     frame.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title)
-            .style(Style::default().bg(SHELL).fg(RULE))
-            .border_style(Style::default().fg(RULE)),
+        Block::default().style(Style::default().bg(SHELL).fg(TEXT)),
         area,
     );
 
@@ -269,7 +276,7 @@ pub fn render(
             ),
         },
     }
-    render_footer(frame, layout.footer, state);
+    render_footer(frame, layout.footer, state, runtime);
 }
 
 fn content_area(layout: &ViewLayout) -> Rect {
@@ -294,15 +301,42 @@ fn render_search(frame: &mut Frame<'_>, area: Rect, state: &PaletteState) {
         PaletteScope::Tabs => Some("ALL TABS"),
         PaletteScope::Agents => Some("AGENTS"),
     };
-    let prefix = badge.map_or_else(|| "› ".to_owned(), |badge| format!("› [{badge}] "));
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let mut spans = vec![Span::styled(
+        "› ",
+        Style::default()
+            .fg(TEAL)
+            .bg(PANEL)
+            .add_modifier(Modifier::BOLD),
+    )];
+    let mut prefix_width = 2;
+    if let Some(badge) = badge {
+        let chip = format!(" {badge} ");
+        prefix_width += display_width(&chip) + 1;
+        spans.push(Span::styled(
+            chip,
+            Style::default()
+                .fg(SHELL)
+                .bg(TEAL)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" ", Style::default().bg(PANEL)));
+    }
     let (display_query, display_cursor) = scoped_display_query(&state.query, parsed.scope);
     let display = TextBuffer::with_text_at_cursor(display_query, display_cursor);
+    let budget = (area.width as usize).saturating_sub(prefix_width);
     let text = if matches!(state.interaction, Interaction::Search) {
-        cursor_line(&prefix, &display, area.width as usize)
+        cursor_line("", &display, budget)
     } else {
-        truncate_parts(&[prefix.as_str(), display.text()], area.width as usize)
+        truncate_line(display.text(), budget)
     };
-    render_line(frame, area, &text, Style::default().fg(TEAL).bg(PANEL));
+    spans.push(Span::styled(text, Style::default().fg(TEXT).bg(PANEL)));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(PANEL)),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
 }
 
 fn scoped_display_query(query: &TextBuffer, scope: PaletteScope) -> (&str, usize) {
@@ -331,42 +365,155 @@ fn render_results(
     catalog: &PaletteCatalog,
 ) {
     let has_actions = layout.action_rows().next().is_some();
+    let parsed = parse_query(state.query.text());
+    let pattern = (!parsed.fuzzy_query.is_empty()).then(|| {
+        Pattern::new(
+            &parsed.fuzzy_query,
+            CaseMatching::Smart,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+        )
+    });
     for row in &layout.rows {
         match row {
-            PaletteRenderRow::Header { source, area } => render_parts(
-                frame, *area, &[match source { PaletteSource::Live => "LIVE", PaletteSource::Commands => "COMMANDS" }],
-                Style::default().fg(TEAL).bg(PANEL).add_modifier(Modifier::BOLD),
-            ),
-            PaletteRenderRow::Hint { area } => render_parts(
-                frame, *area,
-                &["Search everything   > commands   space: workspaces   tab: all tabs   agent: agents"],
-                Style::default().fg(MUTED).bg(PANEL),
-            ),
+            PaletteRenderRow::Header { source, area } => {
+                let (label, count) = match source {
+                    PaletteSource::Live => ("LIVE", state.live_results),
+                    PaletteSource::Commands => ("COMMANDS", state.command_results),
+                };
+                let count_text = count.to_string();
+                let rule_width = usize::from(area.width)
+                    .saturating_sub(display_width(label) + display_width(&count_text) + 3);
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            format!("{label} "),
+                            Style::default()
+                                .fg(TEAL)
+                                .bg(PANEL)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled("─".repeat(rule_width), Style::default().fg(RULE).bg(PANEL)),
+                        Span::styled(
+                            format!(" {count_text} "),
+                            Style::default().fg(MUTED).bg(PANEL),
+                        ),
+                    ]))
+                    .style(Style::default().bg(PANEL)),
+                    *area,
+                );
+            }
+            PaletteRenderRow::Hint { area } => {
+                let token = Style::default().fg(TEAL).bg(PANEL);
+                let label = Style::default().fg(MUTED).bg(PANEL);
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled("Search everything   ", label),
+                        Span::styled(">", token),
+                        Span::styled(" commands   ", label),
+                        Span::styled("space:", token),
+                        Span::styled(" workspaces   ", label),
+                        Span::styled("tab:", token),
+                        Span::styled(" all tabs   ", label),
+                        Span::styled("agent:", token),
+                        Span::styled(" agents", label),
+                    ]))
+                    .style(label),
+                    *area,
+                );
+            }
             PaletteRenderRow::Action { ranked_index, area } => {
                 let Some(ranked) = state.ranked.get(*ranked_index) else { continue; };
                 let Some(item) = catalog.get_ranked(ranked) else { continue; };
                 let selected = *ranked_index == state.selected;
                 let background = if selected { SELECTED } else { PANEL };
-                frame.render_widget(Block::default().style(Style::default().bg(background)), *area);
-                let title_width = area.width as usize;
-                let (title, detail) = match item {
-                    PaletteItem::Command(command) => {
-                        let category = category_label(command.category.as_str());
-                        (truncate_parts(&["[", &category, "] ", command.title.as_str()], title_width), command.description.as_deref().map(|description| truncate_line(description, title_width.saturating_sub(2))))
-                    }
+                let bg = Style::default().bg(background);
+                frame.render_widget(Block::default().style(bg), *area);
+                let width = area.width as usize;
+                let full_metadata = width >= FULL_METADATA_MIN_WIDTH;
+                // Right column: live status for entities, category for commands.
+                let (right_text, right_color) = match item {
+                    PaletteItem::Command(command) => (
+                        if full_metadata { category_label(command.category.as_str()) } else { String::new() },
+                        MUTED,
+                    ),
                     PaletteItem::Entity(entity) => {
-                        let detail = if entity.breadcrumb.is_empty() {
-                            truncate_parts(&[entity.status.as_str()], title_width.saturating_sub(2))
-                        } else {
-                            truncate_parts(&[&entity.breadcrumb, " · ", entity.status.as_str()], title_width.saturating_sub(2))
-                        };
-                        (entity_title(entity, title_width), Some(detail))
+                        let (glyph, label, color) = status_meta(entity.status);
+                        (
+                            if full_metadata { format!("{glyph} {label}") } else { glyph.to_owned() },
+                            color,
+                        )
                     }
                 };
-                let foreground = if selected { Color::Rgb(239, 255, 252) } else { TEXT };
-                let mut lines = vec![Line::from(Span::styled(title, Style::default().fg(foreground).bg(background).add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() })) )];
+                let right_width = display_width(&right_text);
+                let reserved = if right_width == 0 { 0 } else { right_width + 3 };
+                let title_budget = width.saturating_sub(ROW_INDENT).saturating_sub(reserved);
+                let (sigil, title, detail) = match item {
+                    PaletteItem::Command(command) => (
+                        "›",
+                        truncate_line(command.title.as_str(), title_budget),
+                        command.description.as_deref().map(|description| {
+                            truncate_line(description, width.saturating_sub(ROW_INDENT + 1))
+                        }),
+                    ),
+                    PaletteItem::Entity(entity) => (
+                        entity_sigil(entity.kind),
+                        entity_title(entity, title_budget),
+                        (!entity.breadcrumb.is_empty()).then(|| {
+                            truncate_line(&entity.breadcrumb, width.saturating_sub(ROW_INDENT + 1))
+                        }),
+                    ),
+                };
+                // Teal sigil marks the workspace/tab/agent the session is already focused on.
+                let session_focus = match item {
+                    PaletteItem::Entity(entity) => catalog.is_focused(&entity.id),
+                    PaletteItem::Command(_) => false,
+                };
+                let text_color = if selected { SELECTED_TEXT } else { TEXT };
+                let title_style = Style::default().fg(text_color).bg(background).add_modifier(
+                    if selected { Modifier::BOLD } else { Modifier::empty() },
+                );
+                let match_style = Style::default()
+                    .fg(TEAL)
+                    .bg(background)
+                    .add_modifier(Modifier::BOLD);
+                let title_width = display_width(&title);
+                let mut spans = vec![
+                    if selected {
+                        Span::styled("▌ ", Style::default().fg(TEAL).bg(background))
+                    } else {
+                        Span::styled("  ", bg)
+                    },
+                    Span::styled(
+                        format!("{sigil} "),
+                        Style::default()
+                            .fg(if session_focus {
+                                TEAL
+                            } else if selected {
+                                text_color
+                            } else {
+                                MUTED
+                            })
+                            .bg(background),
+                    ),
+                ];
+                spans.extend(highlight_spans(title, pattern.as_ref(), title_style, match_style));
+                if right_width > 0 {
+                    let pad = width.saturating_sub(ROW_INDENT + title_width + right_width + 1);
+                    spans.push(Span::styled(" ".repeat(pad), bg));
+                    spans.push(Span::styled(
+                        right_text,
+                        Style::default().fg(right_color).bg(background),
+                    ));
+                }
+                let mut lines = vec![Line::from(spans)];
                 if area.height > 1 {
-                    if let Some(detail) = detail { lines.push(Line::from(Span::styled(detail, Style::default().fg(if selected { Color::Rgb(239, 255, 252) } else { MUTED }).bg(background)))); }
+                    if let Some(detail) = detail {
+                        lines.push(Line::from(vec![
+                            Span::styled("    ", bg),
+                            Span::styled(detail, Style::default().fg(MUTED).bg(background)),
+                        ]));
+                    }
                 }
                 frame.render_widget(Paragraph::new(lines), *area);
             }
@@ -402,11 +549,10 @@ fn render_results(
         .filter(|_| content_area(layout).height > 0)
     {
         let body = content_area(layout);
-        render_line(
+        render_error_line(
             frame,
             Rect::new(body.x, body.bottom().saturating_sub(1), body.width, 1),
             error,
-            Style::default().fg(ERROR).bg(PANEL),
         );
     }
 }
@@ -414,27 +560,101 @@ fn render_results(
 const MAX_ENTITY_SUFFIX_WIDTH: usize = 16;
 
 fn entity_title(entity: &EntityItem, width: usize) -> String {
-    let kind = entity_kind_label(entity.kind);
-    let prefix = truncate_parts(&["[", kind, "] "], width);
     let Some(stable_suffix) = entity.stable_suffix.as_deref() else {
-        return truncate_parts(&[prefix.as_str(), &entity.label], width);
+        return truncate_line(&entity.label, width);
     };
-    let prefix_width = display_width(&prefix);
-    let remaining = width.saturating_sub(prefix_width);
-    if remaining == 0 {
-        return prefix;
-    }
-    let suffix = truncate_line(stable_suffix, MAX_ENTITY_SUFFIX_WIDTH.min(remaining));
+    let suffix = truncate_line(stable_suffix, MAX_ENTITY_SUFFIX_WIDTH.min(width));
     let suffix_width = display_width(&suffix);
-    let separator = if suffix_width < remaining { " · " } else { "" };
-    let label_width = remaining
+    let separator = if suffix_width < width { " · " } else { "" };
+    let label_width = width
         .saturating_sub(display_width(separator))
         .saturating_sub(suffix_width);
     let label = truncate_line(&entity.label, label_width);
-    truncate_parts(
-        &[prefix.as_str(), label.as_str(), separator, suffix.as_str()],
-        width,
-    )
+    truncate_parts(&[label.as_str(), separator, suffix.as_str()], width)
+}
+
+const fn entity_sigil(kind: EntityKind) -> &'static str {
+    match kind {
+        EntityKind::Workspace => "◆",
+        EntityKind::Tab => "▸",
+        EntityKind::Agent => "✦",
+    }
+}
+
+/// Glyph, label, and hue for the right-hand status column. Active states glow; idle recedes
+/// into lowercase muted text so working agents stand out at a glance.
+const fn status_meta(status: AgentStatus) -> (&'static str, &'static str, Color) {
+    match status {
+        AgentStatus::Working => ("●", "WORKING", WORKING),
+        AgentStatus::Idle => ("○", "idle", MUTED),
+        AgentStatus::Blocked => ("▲", "BLOCKED", WARNING),
+        AgentStatus::Done => ("✓", "DONE", DONE),
+        AgentStatus::Unknown => ("○", "unknown", MUTED),
+    }
+}
+
+thread_local! {
+    static HIGHLIGHT_SCRATCH: RefCell<(Matcher, Vec<char>, Vec<u32>)> =
+        RefCell::new((Matcher::default(), Vec::new(), Vec::new()));
+}
+
+/// Splits an already-truncated title into styled runs, brightening the graphemes the fuzzy
+/// pattern matched. Inputs are bounded by the render truncation that produced `text`.
+fn highlight_spans(
+    text: String,
+    pattern: Option<&Pattern>,
+    base: Style,
+    highlight: Style,
+) -> Vec<Span<'static>> {
+    let Some(pattern) = pattern else {
+        return vec![Span::styled(text, base)];
+    };
+    let matched = HIGHLIGHT_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        let (matcher, utf32_buffer, indices) = &mut *scratch;
+        indices.clear();
+        if pattern
+            .indices(Utf32Str::new(&text, utf32_buffer), matcher, indices)
+            .is_none()
+        {
+            indices.clear();
+        }
+        indices.sort_unstable();
+        indices.dedup();
+        indices.clone()
+    });
+    if matched.is_empty() {
+        return vec![Span::styled(text, base)];
+    }
+    let mut spans = Vec::new();
+    let mut run = String::new();
+    let mut run_matched = false;
+    for (index, ch) in text.chars().enumerate() {
+        // Zero-width marks stay with the run of their base character so grapheme clusters
+        // never straddle a span boundary.
+        let is_match = if display_width(ch.encode_utf8(&mut [0_u8; 4])) == 0 {
+            run_matched
+        } else {
+            matched
+                .binary_search(&u32::try_from(index).unwrap_or(u32::MAX))
+                .is_ok()
+        };
+        if is_match != run_matched && !run.is_empty() {
+            spans.push(Span::styled(
+                std::mem::take(&mut run),
+                if run_matched { highlight } else { base },
+            ));
+        }
+        run_matched = is_match;
+        run.push(ch);
+    }
+    if !run.is_empty() {
+        spans.push(Span::styled(
+            run,
+            if run_matched { highlight } else { base },
+        ));
+    }
+    spans
 }
 
 fn empty_message(state: &PaletteState) -> String {
@@ -470,15 +690,36 @@ fn render_form(
 ) {
     let body = content_area(layout);
     let category = category_label(category);
-    render_parts(
-        frame,
-        Rect::new(body.x, body.y, body.width, u16::from(body.height > 0)),
-        &["[", &category, "] ", title],
-        Style::default()
-            .fg(TEXT)
-            .bg(PANEL)
-            .add_modifier(Modifier::BOLD),
-    );
+    if body.width > 0 && body.height > 0 {
+        let width = usize::from(body.width);
+        let show_category = width >= FULL_METADATA_MIN_WIDTH;
+        let reserved = if show_category {
+            display_width(&category) + 3
+        } else {
+            0
+        };
+        let title_text = truncate_line(title, width.saturating_sub(reserved));
+        let mut spans = vec![Span::styled(
+            title_text.clone(),
+            Style::default()
+                .fg(TEXT)
+                .bg(PANEL)
+                .add_modifier(Modifier::BOLD),
+        )];
+        if show_category {
+            let pad = width
+                .saturating_sub(display_width(&title_text) + display_width(&category) + 1);
+            spans.push(Span::styled(" ".repeat(pad), Style::default().bg(PANEL)));
+            spans.push(Span::styled(
+                category,
+                Style::default().fg(MUTED).bg(PANEL),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(PANEL)),
+            Rect::new(body.x, body.y, body.width, 1),
+        );
+    }
     if let Some(description) = description.filter(|_| body.height > 1) {
         render_line(
             frame,
@@ -503,16 +744,24 @@ fn render_form(
                 .active_step()
                 .map_or("Value", |step| argument_label(step.key()));
             render_line(frame, field, label, Style::default().fg(TEAL).bg(PANEL));
-            if field.height > 1 {
-                let text = state.active_text().map_or_else(
-                    || "› │".to_owned(),
-                    |text| cursor_line("› ", text, field.width as usize),
-                );
-                render_line(
-                    frame,
+            if field.height > 1 && field.width > 0 {
+                let budget = (field.width as usize).saturating_sub(2);
+                let text = state
+                    .active_text()
+                    .map_or_else(|| "│".to_owned(), |text| cursor_line("", text, budget));
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            "› ",
+                            Style::default()
+                                .fg(TEAL)
+                                .bg(PANEL)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(text, Style::default().fg(TEXT).bg(PANEL)),
+                    ]))
+                    .style(Style::default().bg(PANEL)),
                     Rect::new(field.x, field.y.saturating_add(1), field.width, 1),
-                    &text,
-                    Style::default().fg(TEXT).bg(PANEL),
                 );
             }
         }
@@ -568,47 +817,61 @@ fn render_form(
     }
     if let Some(error) = state.error.as_deref().filter(|_| body.height > 0) {
         let error_y = body.bottom().saturating_sub(1);
-        render_line(
-            frame,
-            Rect::new(body.x, error_y, body.width, 1),
-            error,
-            Style::default().fg(ERROR).bg(PANEL),
-        );
+        render_error_line(frame, Rect::new(body.x, error_y, body.width, 1), error);
     }
 }
 
 fn render_choice(frame: &mut Frame<'_>, area: Rect, label: &str, selected: bool) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let background = if selected { SELECTED } else { PANEL };
+    let bg = Style::default().bg(background);
+    frame.render_widget(Block::default().style(bg), area);
+    let label_style = Style::default()
+        .fg(if selected { SELECTED_TEXT } else { TEXT })
+        .bg(background)
+        .add_modifier(if selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
     frame.render_widget(
-        Block::default().style(Style::default().bg(background)),
-        area,
-    );
-    render_parts(
-        frame,
-        area,
-        &["[", if selected { "x" } else { " " }, "] ", label],
-        Style::default()
-            .fg(if selected {
-                Color::Rgb(239, 255, 252)
+        Paragraph::new(Line::from(vec![
+            if selected {
+                Span::styled("▌ ", Style::default().fg(TEAL).bg(background))
             } else {
-                TEXT
-            })
-            .bg(background),
+                Span::styled("  ", bg)
+            },
+            Span::styled(
+                if selected { "● " } else { "○ " },
+                Style::default()
+                    .fg(if selected { TEAL } else { MUTED })
+                    .bg(background),
+            ),
+            Span::styled(
+                truncate_line(label, usize::from(area.width).saturating_sub(5)),
+                label_style,
+            ),
+        ])),
+        Rect::new(area.x, area.y, area.width, 1),
     );
 }
 
 fn render_failure(frame: &mut Frame<'_>, area: Rect, message: &str, retryable: bool) {
-    render_message(frame, area, message, ERROR);
-    if area.height > 1 {
-        render_line(
-            frame,
+    render_error_line(frame, area, message);
+    if area.height > 1 && area.width > 0 {
+        frame.render_widget(
+            Paragraph::new(Line::from(key_hint_spans(
+                if retryable {
+                    "r Retry · Esc Close"
+                } else {
+                    "Esc Close"
+                },
+                PANEL,
+            )))
+            .style(Style::default().bg(PANEL)),
             Rect::new(area.x, area.y.saturating_add(1), area.width, 1),
-            if retryable {
-                "r Retry · Esc Close"
-            } else {
-                "Esc Close"
-            },
-            Style::default().fg(WARNING).bg(PANEL),
         );
     }
 }
@@ -617,7 +880,62 @@ fn render_message(frame: &mut Frame<'_>, area: Rect, message: &str, color: Color
     render_line(frame, area, message, Style::default().fg(color).bg(PANEL));
 }
 
-fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &PaletteState) {
+fn render_error_line(frame: &mut Frame<'_>, area: Rect, message: &str) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "✗ ",
+                Style::default()
+                    .fg(ERROR)
+                    .bg(PANEL)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                truncate_line(message, usize::from(area.width).saturating_sub(2)),
+                Style::default().fg(ERROR).bg(PANEL),
+            ),
+        ]))
+        .style(Style::default().bg(PANEL)),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+}
+
+/// Styles a `key description · key description` hint: keys bright, descriptions muted.
+fn key_hint_spans(text: &str, background: Color) -> Vec<Span<'static>> {
+    let key = Style::default().fg(TEXT).bg(background);
+    let label = Style::default().fg(MUTED).bg(background);
+    let mut spans = Vec::new();
+    for (index, segment) in text.split(" · ").enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" · ", label));
+        }
+        match segment.split_once(' ') {
+            Some((first, rest)) => {
+                spans.push(Span::styled(first.to_owned(), key));
+                spans.push(Span::styled(format!(" {rest}"), label));
+            }
+            None => spans.push(Span::styled(segment.to_owned(), key)),
+        }
+    }
+    spans
+}
+
+/// The workspace context only joins the footer when the hint text leaves comfortable room.
+const FOOTER_CONTEXT_MIN_WIDTH: u16 = 56;
+const FOOTER_CONTEXT_MAX_LABEL: usize = 20;
+
+fn render_footer(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &PaletteState,
+    runtime: Option<&RuntimeSnapshot>,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let text = match state.loading {
         LoadingState::Failed(_) => "r Retry · Esc Close",
         LoadingState::Fatal(_) | LoadingState::Loading => "Esc close",
@@ -640,7 +958,39 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &PaletteState) {
             Interaction::Form(_) => "↑↓ choose · Enter continue · Esc back",
         },
     };
-    render_line(frame, area, text, Style::default().fg(MUTED).bg(SHELL));
+    let truncated = truncate_line(text, usize::from(area.width));
+    frame.render_widget(
+        Paragraph::new(Line::from(key_hint_spans(&truncated, SHELL)))
+            .style(Style::default().fg(MUTED).bg(SHELL)),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+    if area.width < FOOTER_CONTEXT_MIN_WIDTH {
+        return;
+    }
+    let Some(workspace) = runtime.and_then(|snapshot| snapshot.focused_workspace()) else {
+        return;
+    };
+    let context = format!(
+        "◆ {}",
+        truncate_line(workspace.label.as_str(), FOOTER_CONTEXT_MAX_LABEL)
+    );
+    let context_width = display_width(&context);
+    if display_width(text) + 3 + context_width > usize::from(area.width) {
+        return;
+    }
+    let context_width = u16::try_from(context_width).unwrap_or(area.width);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            context,
+            Style::default().fg(MUTED).bg(SHELL),
+        ))),
+        Rect::new(
+            area.x + area.width - context_width,
+            area.y,
+            context_width,
+            1,
+        ),
+    );
 }
 
 fn render_line(frame: &mut Frame<'_>, area: Rect, text: &str, style: Style) {
@@ -827,14 +1177,6 @@ fn cursor_preview_window(source: &str, cursor: usize) -> (usize, usize) {
 
 fn category_label(category: &str) -> String {
     category.to_uppercase()
-}
-
-const fn entity_kind_label(kind: EntityKind) -> &'static str {
-    match kind {
-        EntityKind::Workspace => "WORKSPACE",
-        EntityKind::Tab => "TAB",
-        EntityKind::Agent => "AGENT",
-    }
 }
 
 fn argument_label(key: ArgumentKey) -> &'static str {
@@ -1067,31 +1409,31 @@ mod tests {
         let catalog = registry(&snapshot);
         let mut state = search_state(&catalog, "tab: deploy");
         let output = text(&draw(100, 12, &state, &catalog, &snapshot));
-        assert!(output.contains("› [ALL TABS] deploy│"));
+        assert!(output.contains("ALL TABS  deploy│"));
         assert!(!output.contains("tab: deploy"));
 
         state.query.move_start();
         for _ in 0..2 {
             state.query.move_right();
         }
-        assert!(text(&draw(100, 12, &state, &catalog, &snapshot)).contains("› [ALL TABS] │deploy"));
+        assert!(text(&draw(100, 12, &state, &catalog, &snapshot)).contains("ALL TABS  │deploy"));
         for _ in 0..2 {
             state.query.move_right();
         }
-        assert!(text(&draw(100, 12, &state, &catalog, &snapshot)).contains("› [ALL TABS] │deploy"));
+        assert!(text(&draw(100, 12, &state, &catalog, &snapshot)).contains("ALL TABS  │deploy"));
         assert!(state.query.backspace());
         assert_eq!(state.query.text(), "tab deploy");
 
         state.query = crate::state::TextBuffer::with_text("tab: 界🙂");
         let unicode = text(&draw(100, 12, &state, &catalog, &snapshot));
-        assert!(unicode.contains("› [ALL TABS] 界"));
+        assert!(unicode.contains("ALL TABS  界"));
         assert!(unicode.contains('🙂'));
         assert!(unicode.contains('│'));
         assert!(!unicode.contains("tab: 界"));
         assert!(state.query.backspace());
         assert_eq!(state.query.text(), "tab: 界");
         let after_unicode_backspace = text(&draw(100, 12, &state, &catalog, &snapshot));
-        assert!(after_unicode_backspace.contains("› [ALL TABS] 界"));
+        assert!(after_unicode_backspace.contains("ALL TABS  界"));
         assert!(after_unicode_backspace.contains('│'));
         assert!(!after_unicode_backspace.contains('🙂'));
     }
@@ -1481,12 +1823,12 @@ mod tests {
             let rendered = (row.x..row.right())
                 .map(|x| buffer[(x, row.y)].symbol())
                 .collect::<String>();
-            let kind = match entity.kind {
-                crate::registry::EntityKind::Workspace => "WORKSPACE",
-                crate::registry::EntityKind::Tab => "TAB",
-                crate::registry::EntityKind::Agent => "AGENT",
+            let sigil = match entity.kind {
+                crate::registry::EntityKind::Workspace => "◆",
+                crate::registry::EntityKind::Tab => "▸",
+                crate::registry::EntityKind::Agent => "✦",
             };
-            assert!(rendered.contains(kind), "row {index}: {rendered:?}");
+            assert!(rendered.contains(sigil), "row {index}: {rendered:?}");
             assert!(
                 rendered.contains(&*entity.label),
                 "row {index}: {rendered:?}"
@@ -1498,9 +1840,10 @@ mod tests {
             .find(|(index, _)| *index == state.selected)
             .map(|(_, row)| row)
             .expect("the selected entity is rendered");
-        assert_eq!(buffer[(selected.x, selected.y)].bg, Color::Rgb(18, 97, 92));
+        assert_eq!(buffer[(selected.x, selected.y)].bg, Color::Rgb(27, 42, 45));
         let detailed = text(&draw(100, 30, &state, &catalog, &snapshot));
-        assert!(detailed.contains("Palette / Code · WORKING"));
+        assert!(detailed.contains("Palette / Code"));
+        assert!(detailed.contains("● WORKING"));
 
         let mut hostile_runtime = runtime();
         hostile_runtime.session.workspaces[0].label = "x".repeat(1024 * 1024);
@@ -1513,8 +1856,66 @@ mod tests {
             &hostile_registry,
             &hostile_runtime,
         ));
-        assert!(hostile.contains("[WORKSPACE]"));
+        assert!(hostile.contains('◆'));
         assert!(hostile.contains('…'));
+    }
+
+    #[test]
+    fn section_headers_carry_a_rule_and_the_ranked_count_for_their_source() {
+        let snapshot = runtime();
+        let catalog = registry(&snapshot);
+        let state = search_state(&catalog, "");
+        assert!(state.live_results > 0 && state.command_results > 0);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let mut headers = 0;
+        for row in &layout.rows {
+            let PaletteRenderRow::Header { source, area } = row else {
+                continue;
+            };
+            headers += 1;
+            let expected = match source {
+                crate::registry::PaletteSource::Live => state.live_results,
+                crate::registry::PaletteSource::Commands => state.command_results,
+            };
+            let text = row_text(&buffer, *area);
+            assert!(text.contains('─'), "{text:?}");
+            assert!(
+                text.trim_end().ends_with(&format!(" {expected}")),
+                "{text:?} should end with count {expected}"
+            );
+        }
+        assert_eq!(headers, 2);
+    }
+
+    #[test]
+    fn focused_entities_get_teal_sigils_and_unfocused_stay_muted() {
+        let snapshot = runtime();
+        let catalog = registry(&snapshot);
+        let state = search_state(&catalog, "");
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let sigil_fg = |row: ratatui::layout::Rect| buffer[(row.x + 2, row.y)].fg;
+        let mut saw_focused = false;
+        let mut saw_unfocused = false;
+        for (index, row) in layout.action_rows() {
+            let Some(PaletteItem::Entity(entity)) = state
+                .ranked
+                .get(index)
+                .and_then(|ranked| catalog.get_ranked(ranked))
+            else {
+                continue;
+            };
+            if catalog.is_focused(&entity.id) {
+                assert_eq!(sigil_fg(row), Color::Rgb(70, 217, 194), "row {index}");
+                saw_focused = true;
+            } else if index != state.selected {
+                assert_eq!(sigil_fg(row), Color::Rgb(113, 130, 134), "row {index}");
+                saw_unfocused = true;
+            }
+        }
+        assert!(saw_focused);
+        assert!(saw_unfocused);
     }
 
     #[test]
@@ -1526,16 +1927,18 @@ mod tests {
         let buffer = draw(100, 30, &state, &registry, &runtime);
         let output = text(&buffer);
 
-        assert!(output.contains("COMMAND PALETTE"));
+        assert!(output.contains("◆ Palette"));
         assert!(output.contains("Focus pane"));
         assert!(output.contains("Focus the pane"));
-        assert!(output.contains("[PANE]"));
+        assert!(output.contains("PANE"));
         let selected = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &registry)
             .action_rows()
             .find(|(index, _)| *index == state.selected)
             .map(|(_, row)| row)
             .unwrap();
-        assert_eq!(buffer[(selected.x, selected.y)].bg, Color::Rgb(18, 97, 92));
+        assert_eq!(buffer[(selected.x, selected.y)].bg, Color::Rgb(27, 42, 45));
+        assert_eq!(buffer[(selected.x, selected.y)].symbol(), "▌");
+        assert_eq!(buffer[(selected.x, selected.y)].fg, Color::Rgb(70, 217, 194));
     }
 
     #[test]
@@ -1550,7 +1953,7 @@ mod tests {
         assert!(output.contains('界'));
         assert!(output.contains('🙂'));
         assert!(output.contains('é'));
-        assert!(output.contains("[PANE]"));
+        assert!(output.contains("PANE"));
         assert!(!output.contains("Focus the pane"));
         assert!(output.contains("scopes: >"));
     }
@@ -1565,7 +1968,8 @@ mod tests {
 
         assert!(output.contains("pane"));
         assert!(output.contains("Focus pane"));
-        assert!(output.contains("[PANE]"));
+        // Below the metadata threshold the category column is dropped entirely.
+        assert!(!output.contains("PANE"));
         assert!(output.contains("scopes: >"));
         assert!(!output.contains("↑↓ move"));
     }
@@ -1650,8 +2054,8 @@ mod tests {
         let buffer = draw(64, 20, &confirm, &registry, &runtime);
         let output = text(&buffer);
         assert!(output.contains("Close pane agent?"));
-        assert!(output.contains("[ ] Yes"));
-        assert!(output.contains("[x] No"));
+        assert!(output.contains("○ Yes"));
+        assert!(output.contains("● No"));
     }
 
     #[test]
@@ -1695,7 +2099,7 @@ mod tests {
         ));
         choice.move_form_selection(1);
         let choice_output = text(&draw(36, 9, &choice, &registry, &runtime));
-        assert!(choice_output.contains("[x] Docs"));
+        assert!(choice_output.contains("● Docs"));
 
         let mut confirm = search_state(&registry, "close pane");
         confirm.begin_command(catalog_command(
@@ -1703,7 +2107,7 @@ mod tests {
             CommandId::Core(CoreCommand::ClosePane),
         ));
         let confirm_output = text(&draw(36, 9, &confirm, &registry, &runtime));
-        assert!(confirm_output.contains("[x] No"));
+        assert!(confirm_output.contains("● No"));
     }
 
     #[test]
@@ -1783,7 +2187,9 @@ mod tests {
         ));
         form.set_error("a value is required");
         let buffer = draw(10, 3, &form, &registry, &runtime);
-        assert_eq!(buffer[(1, 2)].symbol(), "─");
+        // Borderless chrome: the margin row is a plain shell-toned cell.
+        assert_eq!(buffer[(1, 2)].symbol(), " ");
+        assert_eq!(buffer[(1, 2)].bg, Color::Rgb(11, 16, 18));
 
         for (width, height) in [(35, 11), (1, 1), (0, 0)] {
             let _ = draw(width, height, &form, &registry, &runtime);
@@ -1815,12 +2221,14 @@ mod tests {
             .unwrap();
         let buffer = draw(100, 30, &search, &registry, &runtime);
         for x in selected.x..selected.right() {
-            assert_eq!(buffer[(x, selected.y)].bg, Color::Rgb(18, 97, 92));
-            assert_eq!(buffer[(x, selected.y + 1)].bg, Color::Rgb(18, 97, 92));
+            assert_eq!(buffer[(x, selected.y)].bg, Color::Rgb(27, 42, 45));
+            assert_eq!(buffer[(x, selected.y + 1)].bg, Color::Rgb(27, 42, 45));
         }
+        // The accent bar marks the selection; the description stays muted beneath it.
+        assert_eq!(buffer[(selected.x, selected.y)].symbol(), "▌");
         assert_eq!(
-            buffer[(selected.x, selected.y + 1)].fg,
-            Color::Rgb(239, 255, 252)
+            buffer[(selected.x + 4, selected.y + 1)].fg,
+            Color::Rgb(113, 130, 134)
         );
 
         let mut form = search_state(&registry, "prompt");
