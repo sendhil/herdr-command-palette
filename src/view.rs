@@ -366,6 +366,7 @@ fn render_results(
 ) {
     let has_actions = layout.action_rows().next().is_some();
     let parsed = parse_query(state.query.text());
+    let show_focus_rail = parsed.scope == PaletteScope::Default && parsed.fuzzy_query.is_empty();
     let pattern = (!parsed.fuzzy_query.is_empty()).then(|| {
         Pattern::new(
             &parsed.fuzzy_query,
@@ -374,7 +375,7 @@ fn render_results(
             AtomKind::Fuzzy,
         )
     });
-    for row in &layout.rows {
+    for (row_index, row) in layout.rows.iter().enumerate() {
         match row {
             PaletteRenderRow::Header { source, area } => {
                 let (label, count) = match source {
@@ -436,28 +437,33 @@ fn render_results(
                 let width = area.width as usize;
                 let full_metadata = width >= FULL_METADATA_MIN_WIDTH;
                 // Right column: live status for entities, category for commands.
-                let (right_text, right_color) = match item {
+                let (right_glyph, right_label, glyph_color, label_color) = match item {
                     PaletteItem::Command(command) => (
+                        None,
                         if full_metadata {
                             category_label(command.category.as_str())
                         } else {
                             String::new()
                         },
                         MUTED,
+                        MUTED,
                     ),
                     PaletteItem::Entity(entity) => {
-                        let (glyph, label, color) = status_meta(entity.status);
+                        let (glyph, label, glyph_color, label_color) = status_meta(entity.status);
                         (
+                            Some(glyph),
                             if full_metadata {
-                                format!("{glyph} {label}")
+                                format!(" {label}")
                             } else {
-                                glyph.to_owned()
+                                String::new()
                             },
-                            color,
+                            glyph_color,
+                            label_color,
                         )
                     }
                 };
-                let right_width = display_width(&right_text);
+                let right_width =
+                    right_glyph.map_or(0, display_width) + display_width(&right_label);
                 let reserved = if right_width == 0 { 0 } else { right_width + 3 };
                 let title_budget = width.saturating_sub(ROW_INDENT).saturating_sub(reserved);
                 let (sigil, title, detail) = match item {
@@ -496,12 +502,19 @@ fn render_results(
                     .bg(background)
                     .add_modifier(Modifier::BOLD);
                 let title_width = display_width(&title);
+                let focus_rail =
+                    focus_rail_glyph(&layout.rows, row_index, state, catalog, show_focus_rail);
+                let rail_continues_down = matches!(focus_rail, Some("╷" | "│"));
                 let mut spans = vec![
                     if selected {
-                        Span::styled("▌ ", Style::default().fg(TEAL).bg(background))
+                        Span::styled("▌", Style::default().fg(TEAL).bg(background))
                     } else {
-                        Span::styled("  ", bg)
+                        Span::styled(" ", bg)
                     },
+                    Span::styled(
+                        focus_rail.unwrap_or(" "),
+                        Style::default().fg(TEAL).bg(background),
+                    ),
                     Span::styled(
                         format!("{sigil} "),
                         Style::default()
@@ -524,16 +537,29 @@ fn render_results(
                 if right_width > 0 {
                     let pad = width.saturating_sub(ROW_INDENT + title_width + right_width + 1);
                     spans.push(Span::styled(" ".repeat(pad), bg));
-                    spans.push(Span::styled(
-                        right_text,
-                        Style::default().fg(right_color).bg(background),
-                    ));
+                    if let Some(glyph) = right_glyph {
+                        spans.push(Span::styled(
+                            glyph,
+                            Style::default().fg(glyph_color).bg(background),
+                        ));
+                    }
+                    if !right_label.is_empty() {
+                        spans.push(Span::styled(
+                            right_label,
+                            Style::default().fg(label_color).bg(background),
+                        ));
+                    }
                 }
                 let mut lines = vec![Line::from(spans)];
                 if area.height > 1 {
                     if let Some(detail) = detail {
                         lines.push(Line::from(vec![
-                            Span::styled("    ", bg),
+                            Span::styled(" ", bg),
+                            Span::styled(
+                                if rail_continues_down { "│" } else { " " },
+                                Style::default().fg(TEAL).bg(background),
+                            ),
+                            Span::styled("  ", bg),
                             Span::styled(detail, Style::default().fg(MUTED).bg(background)),
                         ]));
                     }
@@ -582,6 +608,48 @@ fn render_results(
 
 const MAX_ENTITY_SUFFIX_WIDTH: usize = 16;
 
+fn focus_rail_glyph<'a>(
+    rows: &'a [PaletteRenderRow],
+    row_index: usize,
+    state: &PaletteState,
+    catalog: &PaletteCatalog,
+    enabled: bool,
+) -> Option<&'a str> {
+    if !enabled {
+        return None;
+    }
+    let focused_entity = |row: Option<&PaletteRenderRow>| {
+        let Some(PaletteRenderRow::Action { ranked_index, .. }) = row else {
+            return None;
+        };
+        state
+            .ranked
+            .get(*ranked_index)
+            .and_then(|ranked| catalog.get_ranked(ranked))
+            .and_then(|item| match item {
+                PaletteItem::Entity(entity) if catalog.is_focused(&entity.id) => Some(entity),
+                PaletteItem::Command(_) | PaletteItem::Entity(_) => None,
+            })
+    };
+    let continues = |from: Option<&EntityItem>, to: Option<&EntityItem>| {
+        from.zip(to)
+            .is_some_and(|(from, to)| catalog.continues_focus_chain(&from.id, &to.id))
+    };
+
+    let current = focused_entity(rows.get(row_index))?;
+    match (
+        row_index
+            .checked_sub(1)
+            .is_some_and(|previous| continues(focused_entity(rows.get(previous)), Some(current))),
+        continues(Some(current), focused_entity(rows.get(row_index + 1))),
+    ) {
+        (false, true) => Some("╷"),
+        (true, true) => Some("│"),
+        (true, false) => Some("╵"),
+        (false, false) => None,
+    }
+}
+
 fn entity_title(entity: &EntityItem, width: usize) -> String {
     let Some(stable_suffix) = entity.stable_suffix.as_deref() else {
         return truncate_line(&entity.label, width);
@@ -604,15 +672,15 @@ const fn entity_sigil(kind: EntityKind) -> &'static str {
     }
 }
 
-/// Glyph, label, and hue for the right-hand status column. Active states glow; idle recedes
-/// into lowercase muted text so working agents stand out at a glance.
-const fn status_meta(status: AgentStatus) -> (&'static str, &'static str, Color) {
+/// Glyph, label, and hues for the right-hand status column. Routine labels recede so the
+/// colored glyphs carry liveness while blocked remains the strongest attention cue.
+const fn status_meta(status: AgentStatus) -> (&'static str, &'static str, Color, Color) {
     match status {
-        AgentStatus::Working => ("●", "WORKING", WORKING),
-        AgentStatus::Idle => ("○", "idle", MUTED),
-        AgentStatus::Blocked => ("▲", "BLOCKED", WARNING),
-        AgentStatus::Done => ("✓", "DONE", DONE),
-        AgentStatus::Unknown => ("○", "unknown", MUTED),
+        AgentStatus::Working => ("●", "working", WORKING, MUTED),
+        AgentStatus::Idle => ("○", "idle", MUTED, MUTED),
+        AgentStatus::Blocked => ("▲", "BLOCKED", WARNING, WARNING),
+        AgentStatus::Done => ("✓", "done", DONE, MUTED),
+        AgentStatus::Unknown => ("○", "unknown", MUTED, MUTED),
     }
 }
 
@@ -1328,12 +1396,12 @@ mod tests {
     use super::{
         compute_layout, compute_layout_with_stats, cursor_line_with_inspection_bounds,
         cursor_line_with_inspections, render, truncate_line_with_inspections,
-        truncate_parts_with_inspections_for_test, PaletteRenderRow,
+        truncate_parts_with_inspections_for_test, PaletteRenderRow, DONE, MUTED, WARNING, WORKING,
     };
     use crate::command::{CommandId, CoreCommand};
     use crate::context::parse_invocation_context;
     use crate::model::{
-        ApiCapabilities, RuntimeSnapshot, SessionSnapshotResult, SuccessEnvelope,
+        AgentStatus, ApiCapabilities, RuntimeSnapshot, SessionSnapshotResult, SuccessEnvelope,
         WorktreeListResult,
     };
     use crate::registry::{PaletteCatalog, PaletteItem, PaletteItemId, RankedPaletteItem};
@@ -1863,7 +1931,7 @@ mod tests {
         assert_eq!(buffer[(selected.x, selected.y)].bg, Color::Rgb(27, 42, 45));
         let detailed = text(&draw(100, 30, &state, &catalog, &snapshot));
         assert!(detailed.contains("Palette / Code"));
-        assert!(detailed.contains("● WORKING"));
+        assert!(detailed.contains("● working"));
 
         let mut hostile_runtime = runtime();
         hostile_runtime.session.workspaces[0].label = "x".repeat(1024 * 1024);
@@ -1936,6 +2004,235 @@ mod tests {
         }
         assert!(saw_focused);
         assert!(saw_unfocused);
+    }
+
+    #[test]
+    fn focused_rows_use_a_continuous_rail_without_replacing_selection() {
+        let snapshot = runtime();
+        let catalog = registry(&snapshot);
+        let state = search_state(&catalog, "");
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let focused_rows = layout
+            .action_rows()
+            .filter_map(|(index, row)| {
+                let focused = state
+                    .ranked
+                    .get(index)
+                    .and_then(|ranked| catalog.get_ranked(ranked))
+                    .is_some_and(|item| match item {
+                        PaletteItem::Entity(entity) => catalog.is_focused(&entity.id),
+                        PaletteItem::Command(_) => false,
+                    });
+                focused.then_some(row)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(focused_rows.len(), 3);
+        assert_eq!(buffer[(focused_rows[0].x, focused_rows[0].y)].symbol(), "▌");
+        assert_eq!(
+            focused_rows
+                .iter()
+                .map(|row| buffer[(row.x + 1, row.y)].symbol())
+                .collect::<Vec<_>>(),
+            vec!["╷", "│", "╵"]
+        );
+    }
+
+    #[test]
+    fn focus_rail_continues_through_detail_rows() {
+        let snapshot = runtime();
+        let catalog = registry(&snapshot);
+        let state = search_state(&catalog, "");
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let row = layout
+            .action_rows()
+            .find_map(|(index, row)| {
+                let focused = state
+                    .ranked
+                    .get(index)
+                    .and_then(|ranked| catalog.get_ranked(ranked))
+                    .is_some_and(|item| match item {
+                        PaletteItem::Entity(entity) => catalog.is_focused(&entity.id),
+                        PaletteItem::Command(_) => false,
+                    });
+                (focused
+                    && row.height > 1
+                    && matches!(buffer[(row.x + 1, row.y)].symbol(), "╷" | "│"))
+                .then_some(row)
+            })
+            .expect("a focused detail row should continue the chain");
+
+        assert_eq!(buffer[(row.x + 1, row.y + 1)].symbol(), "│");
+    }
+
+    #[test]
+    fn focus_rail_requires_matching_parent_ids() {
+        let mut snapshot = runtime();
+        snapshot.session.agents[0].workspace_id = "ws-2".into();
+        snapshot.session.agents[0].tab_id = "tab-2".into();
+        snapshot.session.panes[0].workspace_id = "ws-2".into();
+        snapshot.session.panes[0].tab_id = "tab-2".into();
+        let catalog = registry(&snapshot);
+        let state = search_state(&catalog, "");
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let focused_rows = layout
+            .action_rows()
+            .filter_map(|(index, row)| {
+                let entity = state
+                    .ranked
+                    .get(index)
+                    .and_then(|ranked| catalog.get_ranked(ranked))
+                    .and_then(|item| match item {
+                        PaletteItem::Entity(entity) if catalog.is_focused(&entity.id) => {
+                            Some(entity)
+                        }
+                        PaletteItem::Command(_) | PaletteItem::Entity(_) => None,
+                    })?;
+                Some((entity.kind, row))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(focused_rows.len(), 3);
+        assert_eq!(
+            focused_rows
+                .iter()
+                .map(|(_, row)| buffer[(row.x + 1, row.y)].symbol())
+                .collect::<Vec<_>>(),
+            vec!["╷", "╵", " "]
+        );
+    }
+
+    #[test]
+    fn typed_results_keep_focus_sigils_without_connecting_rows() {
+        let snapshot = runtime();
+        let catalog = registry(&snapshot);
+        let state = PaletteState::ready("palette", catalog.rank(""));
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let focused_rows = layout
+            .action_rows()
+            .filter_map(|(index, row)| {
+                state
+                    .ranked
+                    .get(index)
+                    .and_then(|ranked| catalog.get_ranked(ranked))
+                    .is_some_and(|item| match item {
+                        PaletteItem::Entity(entity) => catalog.is_focused(&entity.id),
+                        PaletteItem::Command(_) => false,
+                    })
+                    .then_some(row)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(focused_rows.len() >= 2);
+        let rail = focused_rows
+            .iter()
+            .map(|row| buffer[(row.x + 1, row.y)].symbol())
+            .collect::<Vec<_>>();
+        assert!(
+            rail.iter()
+                .all(|symbol| !matches!(*symbol, "╷" | "│" | "╵")),
+            "typed focus rail: {rail:?}"
+        );
+    }
+
+    #[test]
+    fn blocked_focused_agent_does_not_connect_across_ranked_rows() {
+        let mut snapshot = runtime();
+        snapshot.session.agents[0].agent_status = AgentStatus::Blocked;
+        let catalog = registry(&snapshot);
+        let state = search_state(&catalog, "");
+        let buffer = draw(100, 30, &state, &catalog, &snapshot);
+        let layout = compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+        let focused_rows = layout
+            .action_rows()
+            .filter_map(|(index, row)| {
+                let entity = state
+                    .ranked
+                    .get(index)
+                    .and_then(|ranked| catalog.get_ranked(ranked))
+                    .and_then(|item| match item {
+                        PaletteItem::Entity(entity) if catalog.is_focused(&entity.id) => {
+                            Some(entity)
+                        }
+                        PaletteItem::Command(_) | PaletteItem::Entity(_) => None,
+                    })?;
+                Some((entity.status, row))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(focused_rows.len(), 3);
+        assert_eq!(focused_rows[0].0, AgentStatus::Blocked);
+        assert_eq!(
+            buffer[(focused_rows[0].1.x + 1, focused_rows[0].1.y)].symbol(),
+            " "
+        );
+        assert_eq!(
+            focused_rows[1..]
+                .iter()
+                .map(|(_, row)| buffer[(row.x + 1, row.y)].symbol())
+                .collect::<Vec<_>>(),
+            vec!["╷", "╵"]
+        );
+    }
+
+    #[test]
+    fn status_metadata_colors_only_attention_labels() {
+        fn rendered_status(status: AgentStatus) -> (Color, Color, String) {
+            let mut snapshot = runtime();
+            snapshot.session.workspaces[0].agent_status = status;
+            let catalog = registry(&snapshot);
+            let state = search_state(&catalog, "");
+            let buffer = draw(100, 30, &state, &catalog, &snapshot);
+            let layout =
+                compute_layout(ratatui::layout::Rect::new(0, 0, 100, 30), &state, &catalog);
+            let row = layout
+                .action_rows()
+                .find_map(|(index, row)| {
+                    state
+                        .ranked
+                        .get(index)
+                        .and_then(|ranked| catalog.get_ranked(ranked))
+                        .is_some_and(|item| match item {
+                            PaletteItem::Entity(entity) => {
+                                entity.kind == crate::registry::EntityKind::Workspace
+                                    && entity.status == status
+                            }
+                            PaletteItem::Command(_) => false,
+                        })
+                        .then_some(row)
+                })
+                .expect("workspace status row should be visible");
+            let rendered = row_text(&buffer, row);
+            let width = match status {
+                AgentStatus::Working | AgentStatus::Blocked => 9,
+                AgentStatus::Done => 6,
+                AgentStatus::Idle | AgentStatus::Unknown => unreachable!(),
+            };
+            let metadata_x = row.right() - width - 1;
+            (
+                buffer[(metadata_x, row.y)].fg,
+                buffer[(metadata_x + 2, row.y)].fg,
+                rendered,
+            )
+        }
+
+        let working = rendered_status(AgentStatus::Working);
+        let blocked = rendered_status(AgentStatus::Blocked);
+        let done = rendered_status(AgentStatus::Done);
+
+        assert_eq!(working.0, WORKING);
+        assert_eq!(working.1, MUTED);
+        assert!(working.2.contains("● working"));
+        assert_eq!(blocked.0, WARNING);
+        assert_eq!(blocked.1, WARNING);
+        assert!(blocked.2.contains("▲ BLOCKED"));
+        assert_eq!(done.0, DONE);
+        assert_eq!(done.1, MUTED);
+        assert!(done.2.contains("✓ done"));
     }
 
     #[test]

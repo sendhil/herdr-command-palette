@@ -269,6 +269,7 @@ pub struct PaletteCatalog {
     item_indices: HashMap<String, usize>,
     colliding_item_indices: HashMap<String, Vec<usize>>,
     tab_workspace_ids: HashMap<String, String>,
+    agent_tab_ids: HashMap<String, String>,
     focused_workspace_id: Option<String>,
     focused_tab_id: Option<String>,
     focused_pane_id: Option<String>,
@@ -282,6 +283,7 @@ impl PaletteCatalog {
             item_indices: HashMap::new(),
             colliding_item_indices: HashMap::new(),
             tab_workspace_ids: HashMap::new(),
+            agent_tab_ids: HashMap::new(),
             focused_workspace_id: None,
             focused_tab_id: None,
             focused_pane_id: None,
@@ -351,6 +353,7 @@ impl PaletteCatalog {
         let mut item_indices = HashMap::new();
         let mut colliding_item_indices = HashMap::new();
         let mut tab_workspace_ids = HashMap::new();
+        let mut agent_tab_ids = HashMap::new();
         let mut snapshot_order = 0;
 
         for workspace in &session.workspaces {
@@ -410,6 +413,9 @@ impl PaletteCatalog {
                 continue;
             }
             let tab = tabs[agent.tab_id.as_str()];
+            agent_tab_ids
+                .entry(agent.pane_id.clone())
+                .or_insert_with(|| agent.tab_id.clone());
             insert_record(
                 &mut items,
                 &mut item_indices,
@@ -443,6 +449,7 @@ impl PaletteCatalog {
             item_indices,
             colliding_item_indices,
             tab_workspace_ids,
+            agent_tab_ids,
             focused_workspace_id: session.focused_workspace_id.clone(),
             focused_tab_id: session.focused_tab_id.clone(),
             focused_pane_id: session.focused_pane_id.clone(),
@@ -492,6 +499,23 @@ impl PaletteCatalog {
             PaletteItemId::Tab(tab_id) => self.focused_tab_id.as_deref() == Some(tab_id),
             PaletteItemId::Agent(pane_id) => self.focused_pane_id.as_deref() == Some(pane_id),
             PaletteItemId::Command(_) => false,
+        }
+    }
+
+    pub(crate) fn continues_focus_chain(&self, from: &PaletteItemId, to: &PaletteItemId) -> bool {
+        if !self.is_focused(from) || !self.is_focused(to) {
+            return false;
+        }
+        match (from, to) {
+            (PaletteItemId::Workspace(workspace_id), PaletteItemId::Tab(tab_id)) => self
+                .tab_workspace_ids
+                .get(tab_id)
+                .is_some_and(|parent_id| parent_id == workspace_id),
+            (PaletteItemId::Tab(tab_id), PaletteItemId::Agent(pane_id)) => self
+                .agent_tab_ids
+                .get(pane_id)
+                .is_some_and(|parent_id| parent_id == tab_id),
+            _ => false,
         }
     }
 
