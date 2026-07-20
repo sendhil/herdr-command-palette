@@ -423,8 +423,12 @@ fn render_results(
                 );
             }
             PaletteRenderRow::Action { ranked_index, area } => {
-                let Some(ranked) = state.ranked.get(*ranked_index) else { continue; };
-                let Some(item) = catalog.get_ranked(ranked) else { continue; };
+                let Some(ranked) = state.ranked.get(*ranked_index) else {
+                    continue;
+                };
+                let Some(item) = catalog.get_ranked(ranked) else {
+                    continue;
+                };
                 let selected = *ranked_index == state.selected;
                 let background = if selected { SELECTED } else { PANEL };
                 let bg = Style::default().bg(background);
@@ -434,13 +438,21 @@ fn render_results(
                 // Right column: live status for entities, category for commands.
                 let (right_text, right_color) = match item {
                     PaletteItem::Command(command) => (
-                        if full_metadata { category_label(command.category.as_str()) } else { String::new() },
+                        if full_metadata {
+                            category_label(command.category.as_str())
+                        } else {
+                            String::new()
+                        },
                         MUTED,
                     ),
                     PaletteItem::Entity(entity) => {
                         let (glyph, label, color) = status_meta(entity.status);
                         (
-                            if full_metadata { format!("{glyph} {label}") } else { glyph.to_owned() },
+                            if full_metadata {
+                                format!("{glyph} {label}")
+                            } else {
+                                glyph.to_owned()
+                            },
                             color,
                         )
                     }
@@ -470,9 +482,15 @@ fn render_results(
                     PaletteItem::Command(_) => false,
                 };
                 let text_color = if selected { SELECTED_TEXT } else { TEXT };
-                let title_style = Style::default().fg(text_color).bg(background).add_modifier(
-                    if selected { Modifier::BOLD } else { Modifier::empty() },
-                );
+                let title_style =
+                    Style::default()
+                        .fg(text_color)
+                        .bg(background)
+                        .add_modifier(if selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        });
                 let match_style = Style::default()
                     .fg(TEAL)
                     .bg(background)
@@ -497,7 +515,12 @@ fn render_results(
                             .bg(background),
                     ),
                 ];
-                spans.extend(highlight_spans(title, pattern.as_ref(), title_style, match_style));
+                spans.extend(highlight_spans(
+                    title,
+                    pattern.as_ref(),
+                    title_style,
+                    match_style,
+                ));
                 if right_width > 0 {
                     let pad = width.saturating_sub(ROW_INDENT + title_width + right_width + 1);
                     spans.push(Span::styled(" ".repeat(pad), bg));
@@ -707,13 +730,10 @@ fn render_form(
                 .add_modifier(Modifier::BOLD),
         )];
         if show_category {
-            let pad = width
-                .saturating_sub(display_width(&title_text) + display_width(&category) + 1);
+            let pad =
+                width.saturating_sub(display_width(&title_text) + display_width(&category) + 1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(PANEL)));
-            spans.push(Span::styled(
-                category,
-                Style::default().fg(MUTED).bg(PANEL),
-            ));
+            spans.push(Span::styled(category, Style::default().fg(MUTED).bg(PANEL)));
         }
         frame.render_widget(
             Paragraph::new(Line::from(spans)).style(Style::default().bg(PANEL)),
@@ -1938,7 +1958,10 @@ mod tests {
             .unwrap();
         assert_eq!(buffer[(selected.x, selected.y)].bg, Color::Rgb(27, 42, 45));
         assert_eq!(buffer[(selected.x, selected.y)].symbol(), "▌");
-        assert_eq!(buffer[(selected.x, selected.y)].fg, Color::Rgb(70, 217, 194));
+        assert_eq!(
+            buffer[(selected.x, selected.y)].fg,
+            Color::Rgb(70, 217, 194)
+        );
     }
 
     #[test]
