@@ -1,0 +1,4 @@
+{"id":"cli:request","result":{"type":"worktree_list","source":{"repo_key":"repo-1","repo_name":"herdr","repo_root":"/repo","source_checkout_path":"/repo/main","source_workspace_id":"ws-1"},"worktrees":[
+  {"path":"/repo/main","branch":"main","is_bare":false,"is_detached":false,"is_prunable":false,"is_linked_worktree":false,"open_workspace_id":"ws-1","label":"main"},
+  {"path":"/repo/feature","branch":"feature/palette","is_bare":false,"is_detached":false,"is_prunable":false,"is_linked_worktree":true,"label":"feature/palette"}
+]}}

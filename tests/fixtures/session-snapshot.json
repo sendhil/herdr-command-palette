@@ -1,0 +1,61 @@
+{
+  "id": "cli:api:snapshot",
+  "result": {
+    "type": "session_snapshot",
+    "snapshot": {
+      "version": "0.7.4",
+      "protocol": 3,
+      "focused_workspace_id": "ws-1",
+      "focused_tab_id": "tab-1",
+      "focused_pane_id": "pane-a",
+      "workspaces": [
+        {
+          "workspace_id": "ws-1", "number": 1, "label": "Palette", "focused": true,
+          "pane_count": 4, "tab_count": 1, "active_tab_id": "tab-1", "agent_status": "working",
+          "worktree": {"repo_key": "repo-1", "repo_name": "herdr", "repo_root": "/repo", "checkout_path": "/repo/main", "is_linked_worktree": false}
+        },
+        {
+          "workspace_id": "ws-2", "number": 2, "label": "Docs", "focused": false,
+          "pane_count": 1, "tab_count": 1, "active_tab_id": "tab-2", "agent_status": "idle"
+        }
+      ],
+      "tabs": [
+        {"tab_id": "tab-1", "workspace_id": "ws-1", "number": 1, "label": "Code", "focused": true, "pane_count": 4, "agent_status": "working"},
+        {"tab_id": "tab-2", "workspace_id": "ws-2", "number": 1, "label": "Notes", "focused": false, "pane_count": 1, "agent_status": "idle"}
+      ],
+      "panes": [
+        {"pane_id": "pane-a", "terminal_id": "term-a", "workspace_id": "ws-1", "tab_id": "tab-1", "focused": true, "cwd": "/repo/main", "label": "agent", "agent": "claude", "agent_status": "working", "revision": 12},
+        {"pane_id": "pane-b", "terminal_id": "term-b", "workspace_id": "ws-1", "tab_id": "tab-1", "focused": false, "cwd": "/repo/main", "label": "tests", "agent_status": "done", "revision": 8},
+        {"pane_id": "pane-c", "terminal_id": "term-c", "workspace_id": "ws-1", "tab_id": "tab-1", "focused": false, "cwd": "/repo/main", "agent_status": "unknown", "revision": 4},
+        {"pane_id": "pane-d", "terminal_id": "term-d", "workspace_id": "ws-1", "tab_id": "tab-1", "focused": false, "cwd": "/repo/main", "agent": "codex", "agent_status": "idle", "revision": 7},
+        {"pane_id": "pane-e", "terminal_id": "term-e", "workspace_id": "ws-2", "tab_id": "tab-2", "focused": false, "cwd": "/repo/docs", "agent_status": "done", "revision": 3}
+      ],
+      "layouts": [
+        {
+          "workspace_id": "ws-1", "tab_id": "tab-1", "zoomed": false,
+          "area": {"x": 0, "y": 0, "width": 120, "height": 40}, "focused_pane_id": "pane-a",
+          "panes": [
+            {"pane_id": "pane-a", "focused": true, "rect": {"x": 0, "y": 0, "width": 60, "height": 20}},
+            {"pane_id": "pane-b", "focused": false, "rect": {"x": 60, "y": 0, "width": 60, "height": 20}},
+            {"pane_id": "pane-c", "focused": false, "rect": {"x": 0, "y": 20, "width": 60, "height": 20}},
+            {"pane_id": "pane-d", "focused": false, "rect": {"x": 60, "y": 20, "width": 60, "height": 20}}
+          ],
+          "splits": [
+            {"id": "root", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 40}},
+            {"id": "left", "direction": "down", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 60, "height": 40}},
+            {"id": "right", "direction": "down", "ratio": 0.5, "rect": {"x": 60, "y": 0, "width": 60, "height": 40}}
+          ]
+        },
+        {
+          "workspace_id": "ws-2", "tab_id": "tab-2", "zoomed": false,
+          "area": {"x": 0, "y": 0, "width": 120, "height": 40}, "focused_pane_id": "pane-e",
+          "panes": [{"pane_id": "pane-e", "focused": true, "rect": {"x": 0, "y": 0, "width": 120, "height": 40}}], "splits": []
+        }
+      ],
+      "agents": [
+        {"terminal_id": "term-a", "name": "reviewer", "agent": "claude", "display_agent": "Claude", "agent_status": "working", "workspace_id": "ws-1", "tab_id": "tab-1", "pane_id": "pane-a", "focused": true, "cwd": "/repo/main", "revision": 12},
+        {"terminal_id": "term-d", "name": "builder", "agent": "codex", "display_agent": "Codex", "agent_status": "idle", "workspace_id": "ws-1", "tab_id": "tab-1", "pane_id": "pane-d", "focused": false, "cwd": "/repo/main", "revision": 7}
+      ]
+    }
+  }
+}

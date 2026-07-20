@@ -1,0 +1,23 @@
+id = "herdr.command-palette"
+name = "Herdr Command Palette"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "Search commands and plugin actions, and focus live workspaces, tabs, and agents."
+platforms = ["macos"]
+
+[[build]]
+command = ["cargo", "build", "--release", "--locked"]
+
+[[actions]]
+id = "open"
+title = "Open command palette"
+contexts = ["global"]
+command = ["./target/release/herdr-command-palette", "open"]
+
+[[panes]]
+id = "palette"
+title = "Command Palette"
+placement = "popup"
+width = "80%"
+height = "60%"
+command = ["./target/release/herdr-command-palette", "run"]

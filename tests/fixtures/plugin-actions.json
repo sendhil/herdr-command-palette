@@ -1,0 +1,8 @@
+{"id":"cli:plugin","result":{"type":"plugin_action_list","actions":[
+  {"plugin_id":"demo.tools","action_id":"run","title":"Run demo","description":"Runs a demo","contexts":["global"],"command":["bin/demo","run"],"platforms":["macos"]},
+  {"plugin_id":"demo.tools","action_id":"selection","title":"Use selection","contexts":["selection","pane"],"command":["bin/demo","selection"],"platforms":["macos"]},
+  {"plugin_id":"demo.tools","action_id":"linux","title":"Linux only","contexts":[],"command":["bin/demo"],"platforms":["linux"]},
+  {"plugin_id":"demo.disabled","action_id":"run","title":"Disabled action","contexts":["global"],"command":["bin/disabled"],"platforms":["macos"]},
+  {"plugin_id":"demo.broken","action_id":"run","title":"Unavailable action","contexts":["global"],"command":["bin/broken"],"platforms":["macos"]},
+  {"plugin_id":"herdr.command-palette","action_id":"open","title":"Open command palette","contexts":["global"],"command":["target/release/herdr-command-palette","open"],"platforms":["macos"]}
+]}}

@@ -1,0 +1,21 @@
+{
+  "workspace_id": "ws-1",
+  "workspace_label": "Palette",
+  "workspace_cwd": "/invoked/cwd",
+  "worktree": {
+    "repo_key": "repo-1",
+    "repo_name": "herdr",
+    "repo_root": "/repo",
+    "checkout_path": "/repo/main",
+    "is_linked_worktree": false
+  },
+  "tab_id": "tab-1",
+  "tab_label": "Code",
+  "focused_pane_id": "pane-a",
+  "focused_pane_cwd": "/repo/main",
+  "focused_pane_agent": "claude",
+  "focused_pane_status": "working",
+  "selected_text": "chosen",
+  "invocation_source": "plugin_action",
+  "correlation_id": "fixture-1"
+}

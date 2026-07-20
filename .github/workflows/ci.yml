@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  stable:
+    name: stable macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - run: cargo fmt --check
+      - run: >-
+          cargo clippy --locked --all-targets --all-features -- -D
+          warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: >-
+          cargo test --release --locked --test performance -- --ignored
+          --nocapture
+      - run: cargo package --locked
+
+  msrv:
+    name: Rust 1.88.0 macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - run: cargo test --locked
+      - run: cargo build --release --locked
