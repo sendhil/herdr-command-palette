@@ -55,24 +55,52 @@ Give a coding agent this request exactly:
 > plugin ID, enabled state, source, version, and manifest path. Resolve my real
 > Herdr configuration source, including symlinks or managed dotfiles,
 > and inspect existing keybindings. Ask my permission before adding or
-> changing `prefix+p`; never silently overwrite a conflict. Reload Herdr
-> configuration and verify only after I approve configuration changes. Report
-> every command result and every changed path.
+> changing `cmd+shift+p`; never silently overwrite a conflict. If I use WezTerm,
+> inspect its real configuration and ask before adding the forwarding rule from
+> this README. Reload Herdr and terminal configuration only after I approve the
+> changes. Report every command result and every changed path.
 
-## Configure `prefix+p`
+## Configure `Cmd-Shift-P`
 
 After checking for conflicts and with your approval, add this to the real Herdr
 key configuration file:
 
 ```toml
 [[keys.command]]
-key = "prefix+p"
+key = "cmd+shift+p"
 type = "plugin_action"
 command = "herdr.command-palette.open"
 description = "open command palette"
 ```
 
-Reload Herdr configuration after changing that file.
+Some terminals need an explicit modified-key mapping. WezTerm uses
+`Ctrl-Shift-P` for its own command palette and does not send `Cmd-Shift-P` to
+Herdr in a distinguishable form by default. The following entry assumes your
+existing configuration already defines `wezterm` with `require("wezterm")` and
+a `config.keys` table; merge the entry into that table rather than replacing
+your other bindings:
+
+```lua
+{
+  key = "p",
+  mods = "CMD|SHIFT",
+  action = wezterm.action_callback(function(window, pane)
+    local process = pane:get_foreground_process_name() or ""
+    if process:match("/herdr$") then
+      pane:send_text("\x1b[112:80;10u")
+    else
+      window:perform_action(
+        wezterm.action.SendKey({ key = "p", mods = "CMD|SHIFT" }),
+        pane
+      )
+    end
+  end),
+},
+```
+
+This preserves WezTerm's `Ctrl-Shift-P` command palette and passes
+`Cmd-Shift-P` through normally when Herdr is not the foreground process. Reload
+Herdr and WezTerm after changing their configuration files.
 
 ## Usage and search scopes
 
