@@ -1,6 +1,6 @@
 [package]
 name = "herdr-command-palette"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "A macOS Herdr command palette for commands, plugin actions, and live workspaces"

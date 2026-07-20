@@ -26,7 +26,7 @@ installing a plugin. Use only sources and tags you trust.
 Install the reviewed, immutable source release:
 
 ```bash
-herdr plugin install sendhil/herdr-command-palette --ref v0.1.0
+herdr plugin install sendhil/herdr-command-palette --ref v0.1.1
 ```
 
 Herdr clones the source, runs the manifest's locked release build, and links the
@@ -37,20 +37,20 @@ herdr plugin list --plugin herdr.command-palette --json
 ```
 
 Confirm the result reports plugin ID `herdr.command-palette`, version
-`0.1.0`, an enabled registration, the expected source, and its manifest path.
+`0.1.1`, an enabled registration, the expected source, and its manifest path.
 
 ## Install with a coding agent
 
 Give a coding agent this request exactly:
 
-> Install `sendhil/herdr-command-palette` at exactly `v0.1.0` using Herdr's
+> Install `sendhil/herdr-command-palette` at exactly `v0.1.1` using Herdr's
 > plugin installer. First read this README and `herdr-plugin.toml`. Verify that
 > this is macOS, Herdr is 0.7.4 or newer, and Rust is 1.88 or newer. Before
 > changing anything, query the existing `herdr.command-palette` registration.
 > Do not use `sudo`, `curl | sh`, force flags, or unrelated package managers.
 > Do not overwrite or unlink a registration from another source without my
 > explicit approval. After reviewing Herdr's install preview, run
-> `herdr plugin install sendhil/herdr-command-palette --ref v0.1.0 --yes`
+> `herdr plugin install sendhil/herdr-command-palette --ref v0.1.1 --yes`
 > because coding-agent command execution is non-interactive, then verify the
 > plugin ID, enabled state, source, version, and manifest path. Resolve my real
 > Herdr configuration source, including symlinks or managed dotfiles,
@@ -130,7 +130,7 @@ To update to a reviewed release, rerun the install command with the desired
 explicit tag and verify the resulting JSON registration:
 
 ```bash
-herdr plugin install sendhil/herdr-command-palette --ref v0.1.0
+herdr plugin install sendhil/herdr-command-palette --ref v0.1.1
 herdr plugin list --plugin herdr.command-palette --json
 ```
 

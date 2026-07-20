@@ -4,7 +4,7 @@ fn manifest_declares_open_action_and_popup() {
     let value: toml::Value = toml::from_str(&raw).expect("manifest parses");
     assert_eq!(value["id"].as_str(), Some("herdr.command-palette"));
     assert_eq!(value["name"].as_str(), Some("Herdr Command Palette"));
-    assert_eq!(value["version"].as_str(), Some("0.1.0"));
+    assert_eq!(value["version"].as_str(), Some("0.1.1"));
     assert_eq!(value["min_herdr_version"].as_str(), Some("0.7.4"));
     assert_eq!(
         value["description"].as_str(),

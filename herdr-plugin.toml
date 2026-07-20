@@ -1,6 +1,6 @@
 id = "herdr.command-palette"
 name = "Herdr Command Palette"
-version = "0.1.0"
+version = "0.1.1"
 min_herdr_version = "0.7.4"
 description = "Search commands and plugin actions, and focus live workspaces, tabs, and agents."
 platforms = ["macos"]
