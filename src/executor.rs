@@ -432,7 +432,10 @@ fn core_operations(
         CoreCommand::TogglePaneZoom => Ok(vec![HerdrOperation::PaneZoomToggle {
             pane_id: pane_id()?,
         }]),
-        CoreCommand::RenameFocusedPane => Err(ValidationError::MissingCurrent("pane")),
+        CoreCommand::RenameFocusedPane => Ok(vec![HerdrOperation::PaneRename {
+            pane_id: pane_id()?,
+            label: optional_trimmed(values, ArgumentKey::Label, "pane label")?,
+        }]),
         CoreCommand::ClosePane => {
             confirmed(values, "pane close")?;
             Ok(vec![HerdrOperation::PaneClose {
@@ -516,9 +519,9 @@ fn stable_target(command: CoreCommand, operation: &HerdrOperation) -> Option<Sta
             Some(StableTarget::Worktree(path.to_string_lossy().into_owned()))
         }
         HerdrOperation::TabFocus { tab_id } => Some(StableTarget::Tab(tab_id.clone())),
-        HerdrOperation::PaneFocus { pane_id, .. } | HerdrOperation::PaneZoomToggle { pane_id } => {
-            Some(StableTarget::Pane(pane_id.clone()))
-        }
+        HerdrOperation::PaneFocus { pane_id, .. }
+        | HerdrOperation::PaneZoomToggle { pane_id }
+        | HerdrOperation::PaneRename { pane_id, .. } => Some(StableTarget::Pane(pane_id.clone())),
         HerdrOperation::AgentFocus { pane_id }
         | HerdrOperation::AgentRename { pane_id, .. }
         | HerdrOperation::AgentPrompt { pane_id, .. } => Some(StableTarget::Agent(pane_id.clone())),
@@ -530,7 +533,6 @@ fn stable_target(command: CoreCommand, operation: &HerdrOperation) -> Option<Sta
         | HerdrOperation::TabRename { .. }
         | HerdrOperation::TabClose { .. }
         | HerdrOperation::PaneSplit { .. }
-        | HerdrOperation::PaneRename { .. }
         | HerdrOperation::PaneClose { .. }
         | HerdrOperation::PaneRun { .. }
         | HerdrOperation::AgentStart { .. }
@@ -540,7 +542,9 @@ fn stable_target(command: CoreCommand, operation: &HerdrOperation) -> Option<Sta
         CoreCommand::SwitchWorkspace => Some(StableTargetKind::Workspace),
         CoreCommand::OpenWorktree => Some(StableTargetKind::Worktree),
         CoreCommand::SwitchTab => Some(StableTargetKind::Tab),
-        CoreCommand::FocusPane(_) | CoreCommand::TogglePaneZoom => Some(StableTargetKind::Pane),
+        CoreCommand::FocusPane(_)
+        | CoreCommand::TogglePaneZoom
+        | CoreCommand::RenameFocusedPane => Some(StableTargetKind::Pane),
         CoreCommand::SwitchAgent
         | CoreCommand::RenameFocusedAgent
         | CoreCommand::PromptFocusedAgent => Some(StableTargetKind::Agent),
@@ -552,7 +556,6 @@ fn stable_target(command: CoreCommand, operation: &HerdrOperation) -> Option<Sta
         | CoreCommand::RenameTab
         | CoreCommand::CloseTab
         | CoreCommand::SplitPane(_)
-        | CoreCommand::RenameFocusedPane
         | CoreCommand::ClosePane
         | CoreCommand::RunCommandInNewPane
         | CoreCommand::StartAgent => None,
@@ -569,7 +572,7 @@ fn is_refreshable_stale(command: CoreCommand, error: &ClientError) -> bool {
         CoreCommand::OpenWorktree => code == "worktree_not_found",
         CoreCommand::SwitchTab => code == "tab_not_found",
         CoreCommand::FocusPane(_) => code == "pane_not_found" || code == "target_pane_not_found",
-        CoreCommand::TogglePaneZoom => code == "pane_not_found",
+        CoreCommand::TogglePaneZoom | CoreCommand::RenameFocusedPane => code == "pane_not_found",
         CoreCommand::SwitchAgent
         | CoreCommand::RenameFocusedAgent
         | CoreCommand::PromptFocusedAgent => code == "agent_not_found",
@@ -581,7 +584,6 @@ fn is_refreshable_stale(command: CoreCommand, error: &ClientError) -> bool {
         | CoreCommand::RenameTab
         | CoreCommand::CloseTab
         | CoreCommand::SplitPane(_)
-        | CoreCommand::RenameFocusedPane
         | CoreCommand::ClosePane
         | CoreCommand::RunCommandInNewPane
         | CoreCommand::StartAgent => false,
@@ -594,6 +596,7 @@ fn retryable(command: CoreCommand) -> bool {
         | CoreCommand::SwitchTab
         | CoreCommand::FocusPane(_)
         | CoreCommand::TogglePaneZoom
+        | CoreCommand::RenameFocusedPane
         | CoreCommand::SwitchAgent
         | CoreCommand::RenameFocusedAgent
         | CoreCommand::PromptFocusedAgent => true,
@@ -606,7 +609,6 @@ fn retryable(command: CoreCommand) -> bool {
         | CoreCommand::RenameTab
         | CoreCommand::CloseTab
         | CoreCommand::SplitPane(_)
-        | CoreCommand::RenameFocusedPane
         | CoreCommand::ClosePane
         | CoreCommand::RunCommandInNewPane
         | CoreCommand::StartAgent => false,
@@ -632,7 +634,8 @@ fn retry_target_still_valid(
             refreshed.session.tabs.iter().any(|tab| tab.tab_id == *id)
         }
         (CoreCommand::FocusPane(_), StableTarget::Pane(id))
-        | (CoreCommand::TogglePaneZoom, StableTarget::Pane(id)) => refreshed
+        | (CoreCommand::TogglePaneZoom, StableTarget::Pane(id))
+        | (CoreCommand::RenameFocusedPane, StableTarget::Pane(id)) => refreshed
             .session
             .panes
             .iter()
@@ -652,7 +655,6 @@ fn retry_target_still_valid(
         | (CoreCommand::RenameTab, _)
         | (CoreCommand::CloseTab, _)
         | (CoreCommand::SplitPane(_), _)
-        | (CoreCommand::RenameFocusedPane, _)
         | (CoreCommand::ClosePane, _)
         | (CoreCommand::RunCommandInNewPane, _)
         | (CoreCommand::StartAgent, _) => false,
@@ -661,6 +663,7 @@ fn retry_target_still_valid(
         | (CoreCommand::SwitchTab, _)
         | (CoreCommand::FocusPane(_), _)
         | (CoreCommand::TogglePaneZoom, _)
+        | (CoreCommand::RenameFocusedPane, _)
         | (CoreCommand::SwitchAgent, _)
         | (CoreCommand::RenameFocusedAgent, _)
         | (CoreCommand::PromptFocusedAgent, _) => false,
@@ -970,6 +973,14 @@ mod tests {
                 }],
             ),
             (
+                CoreCommand::RenameFocusedPane,
+                args(&[(ArgumentKey::Label, text("  build logs  "))]),
+                vec![HerdrOperation::PaneRename {
+                    pane_id: "pane-a".into(),
+                    label: Some("build logs".into()),
+                }],
+            ),
+            (
                 CoreCommand::ClosePane,
                 args(&[(ArgumentKey::Confirm, yes())]),
                 vec![HerdrOperation::PaneClose {
@@ -1069,6 +1080,34 @@ mod tests {
                 base: "main".into(),
                 label: Some("label".into())
             }]
+        );
+    }
+
+    #[test]
+    fn rename_focused_pane_maps_blank_to_clear_and_requires_the_focused_pane() {
+        let snapshot = runtime();
+        assert_eq!(
+            core_operations(
+                CoreCommand::RenameFocusedPane,
+                &args(&[(ArgumentKey::Label, text(" \t "))]),
+                &snapshot,
+            )
+            .unwrap(),
+            [HerdrOperation::PaneRename {
+                pane_id: "pane-a".into(),
+                label: None,
+            }]
+        );
+
+        let mut without_pane = snapshot;
+        without_pane.session.focused_pane_id = None;
+        assert_eq!(
+            core_operations(
+                CoreCommand::RenameFocusedPane,
+                &args(&[(ArgumentKey::Label, text("build logs"))]),
+                &without_pane,
+            ),
+            Err(ValidationError::MissingCurrent("pane"))
         );
     }
 
@@ -1503,6 +1542,116 @@ mod tests {
     }
 
     #[test]
+    fn rename_pane_stale_retry_uses_only_the_same_pane_id() {
+        let snapshot = runtime();
+        let mut client = FakeClient::refresh_from(&snapshot);
+        client.dispatches = [
+            Err(ClientError::Api {
+                code: "pane_not_found".into(),
+                message: "stale pane".into(),
+            }),
+            Ok(OperationResponse::Empty),
+        ]
+        .into();
+        let mut executor = CommandExecutor::new(client);
+        let values = args(&[(ArgumentKey::Label, text("build logs"))]);
+
+        assert_eq!(
+            executor.execute(
+                CommandId::Core(CoreCommand::RenameFocusedPane),
+                &values,
+                &snapshot,
+            ),
+            ExecutionOutcome::Succeeded
+        );
+        assert_eq!(
+            executor.client().operations,
+            [
+                HerdrOperation::PaneRename {
+                    pane_id: "pane-a".into(),
+                    label: Some("build logs".into()),
+                },
+                HerdrOperation::PaneRename {
+                    pane_id: "pane-a".into(),
+                    label: Some("build logs".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_pane_stale_refresh_never_retargets_a_same_labeled_replacement() {
+        let snapshot = runtime();
+        let mut refreshed = snapshot.clone();
+        let mut replacement = refreshed
+            .session
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == "pane-a")
+            .cloned()
+            .unwrap();
+        replacement.pane_id = "pane-replacement".into();
+        replacement.label = Some("agent".into());
+        refreshed
+            .session
+            .panes
+            .retain(|pane| pane.pane_id != "pane-a");
+        refreshed.session.panes.push(replacement);
+
+        let mut client = FakeClient::refresh_from(&refreshed);
+        client.dispatches = [Err(ClientError::Api {
+            code: "pane_not_found".into(),
+            message: "gone".into(),
+        })]
+        .into();
+        let mut executor = CommandExecutor::new(client);
+        let outcome = executor.execute(
+            CommandId::Core(CoreCommand::RenameFocusedPane),
+            &args(&[(ArgumentKey::Label, text("build logs"))]),
+            &snapshot,
+        );
+
+        assert!(matches!(
+            outcome,
+            ExecutionOutcome::Failed {
+                refreshed: Some(ref value),
+                ..
+            } if value == &refreshed
+        ));
+        assert_eq!(
+            executor.client().operations,
+            [HerdrOperation::PaneRename {
+                pane_id: "pane-a".into(),
+                label: Some("build logs".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn rename_pane_only_refreshes_for_pane_not_found() {
+        let snapshot = runtime();
+        let mut executor =
+            CommandExecutor::new(FakeClient::with_dispatches([Err(ClientError::Api {
+                code: "agent_not_found".into(),
+                message: "wrong resource".into(),
+            })]));
+
+        assert!(matches!(
+            executor.execute(
+                CommandId::Core(CoreCommand::RenameFocusedPane),
+                &args(&[(ArgumentKey::Label, text("build logs"))]),
+                &snapshot,
+            ),
+            ExecutionOutcome::Failed {
+                refreshed: None,
+                ..
+            }
+        ));
+        assert_eq!(executor.client().operations.len(), 1);
+        assert!(executor.client().refresh_calls.is_empty());
+    }
+
+    #[test]
     fn rename_agent_stale_retry_uses_only_the_same_pane_id() {
         let snapshot = runtime();
         let mut client = FakeClient::refresh_from(&snapshot);
@@ -1630,6 +1779,11 @@ mod tests {
             ),
             (CoreCommand::TogglePaneZoom, args(&[]), "pane_not_found"),
             (
+                CoreCommand::RenameFocusedPane,
+                args(&[(ArgumentKey::Label, text("build logs"))]),
+                "pane_not_found",
+            ),
+            (
                 CoreCommand::SwitchAgent,
                 args(&[(ArgumentKey::Agent, choice("pane-d"))]),
                 "agent_not_found",
@@ -1720,6 +1874,11 @@ mod tests {
             ),
             (CoreCommand::TogglePaneZoom, args(&[]), "pane_not_found"),
             (
+                CoreCommand::RenameFocusedPane,
+                args(&[(ArgumentKey::Label, text("build logs"))]),
+                "pane_not_found",
+            ),
+            (
                 CoreCommand::SwitchAgent,
                 args(&[(ArgumentKey::Agent, choice("pane-d"))]),
                 "agent_not_found",
@@ -1745,7 +1904,9 @@ mod tests {
                 CoreCommand::SwitchTab => {
                     refreshed.session.tabs.retain(|tab| tab.tab_id != "tab-2")
                 }
-                CoreCommand::FocusPane(_) | CoreCommand::TogglePaneZoom => refreshed
+                CoreCommand::FocusPane(_)
+                | CoreCommand::TogglePaneZoom
+                | CoreCommand::RenameFocusedPane => refreshed
                     .session
                     .panes
                     .retain(|pane| pane.pane_id != "pane-a"),
@@ -1766,7 +1927,6 @@ mod tests {
                 | CoreCommand::RenameTab
                 | CoreCommand::CloseTab
                 | CoreCommand::SplitPane(_)
-                | CoreCommand::RenameFocusedPane
                 | CoreCommand::ClosePane
                 | CoreCommand::RunCommandInNewPane
                 | CoreCommand::StartAgent => unreachable!("only retryable commands are tabled"),
