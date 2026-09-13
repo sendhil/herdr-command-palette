@@ -530,6 +530,7 @@ fn stable_target(command: CoreCommand, operation: &HerdrOperation) -> Option<Sta
         | HerdrOperation::TabRename { .. }
         | HerdrOperation::TabClose { .. }
         | HerdrOperation::PaneSplit { .. }
+        | HerdrOperation::PaneRename { .. }
         | HerdrOperation::PaneClose { .. }
         | HerdrOperation::PaneRun { .. }
         | HerdrOperation::AgentStart { .. }

@@ -159,6 +159,10 @@ pub enum HerdrOperation {
     PaneZoomToggle {
         pane_id: String,
     },
+    PaneRename {
+        pane_id: String,
+        label: Option<String>,
+    },
     PaneClose {
         pane_id: String,
     },
@@ -293,6 +297,10 @@ impl HerdrOperation {
             Self::PaneZoomToggle { pane_id } => {
                 with_values(["pane", "zoom", "--pane"], [pane_id.as_str(), "--toggle"])
             }
+            Self::PaneRename { pane_id, label } => match label {
+                Some(label) => with_values(["pane", "rename"], [pane_id.as_str(), label.as_str()]),
+                None => with_values(["pane", "rename"], [pane_id.as_str(), "--clear"]),
+            },
             Self::PaneClose { pane_id } => with_values(["pane", "close"], [pane_id.as_str()]),
             Self::PaneRun { pane_id, command } => {
                 with_values(["pane", "run"], [pane_id.as_str(), command.as_str()])
@@ -343,6 +351,7 @@ impl HerdrOperation {
             | Self::PaneFocus { .. }
             | Self::PaneSplit { .. }
             | Self::PaneZoomToggle { .. }
+            | Self::PaneRename { .. }
             | Self::PaneClose { .. }
             | Self::PaneRun { .. }
             | Self::AgentFocus { .. }
@@ -368,6 +377,7 @@ impl HerdrOperation {
             | Self::TabClose { .. }
             | Self::PaneFocus { .. }
             | Self::PaneZoomToggle { .. }
+            | Self::PaneRename { .. }
             | Self::PaneClose { .. }
             | Self::AgentFocus { .. }
             | Self::AgentRename { .. }

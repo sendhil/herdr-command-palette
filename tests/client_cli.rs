@@ -247,6 +247,22 @@ fn every_operation_has_exact_public_cli_argv_and_request_class() {
             RequestClass::Mutation,
         ),
         (
+            HerdrOperation::PaneRename {
+                pane_id: "pane-1".into(),
+                label: Some("build logs".into()),
+            },
+            os(&["pane", "rename", "pane-1", "build logs"]),
+            RequestClass::Mutation,
+        ),
+        (
+            HerdrOperation::PaneRename {
+                pane_id: "pane-1".into(),
+                label: None,
+            },
+            os(&["pane", "rename", "pane-1", "--clear"]),
+            RequestClass::Mutation,
+        ),
+        (
             HerdrOperation::PaneClose {
                 pane_id: "pane-1".into(),
             },
