@@ -165,6 +165,7 @@ impl<C: HerdrClient> CommandExecutor<C> {
             | CoreCommand::FocusPane(_)
             | CoreCommand::SplitPane(_)
             | CoreCommand::TogglePaneZoom
+            | CoreCommand::RenameFocusedPane
             | CoreCommand::ClosePane
             | CoreCommand::SwitchAgent
             | CoreCommand::RenameFocusedAgent
@@ -431,6 +432,7 @@ fn core_operations(
         CoreCommand::TogglePaneZoom => Ok(vec![HerdrOperation::PaneZoomToggle {
             pane_id: pane_id()?,
         }]),
+        CoreCommand::RenameFocusedPane => Err(ValidationError::MissingCurrent("pane")),
         CoreCommand::ClosePane => {
             confirmed(values, "pane close")?;
             Ok(vec![HerdrOperation::PaneClose {
@@ -549,6 +551,7 @@ fn stable_target(command: CoreCommand, operation: &HerdrOperation) -> Option<Sta
         | CoreCommand::RenameTab
         | CoreCommand::CloseTab
         | CoreCommand::SplitPane(_)
+        | CoreCommand::RenameFocusedPane
         | CoreCommand::ClosePane
         | CoreCommand::RunCommandInNewPane
         | CoreCommand::StartAgent => None,
@@ -577,6 +580,7 @@ fn is_refreshable_stale(command: CoreCommand, error: &ClientError) -> bool {
         | CoreCommand::RenameTab
         | CoreCommand::CloseTab
         | CoreCommand::SplitPane(_)
+        | CoreCommand::RenameFocusedPane
         | CoreCommand::ClosePane
         | CoreCommand::RunCommandInNewPane
         | CoreCommand::StartAgent => false,
@@ -601,6 +605,7 @@ fn retryable(command: CoreCommand) -> bool {
         | CoreCommand::RenameTab
         | CoreCommand::CloseTab
         | CoreCommand::SplitPane(_)
+        | CoreCommand::RenameFocusedPane
         | CoreCommand::ClosePane
         | CoreCommand::RunCommandInNewPane
         | CoreCommand::StartAgent => false,
@@ -646,6 +651,7 @@ fn retry_target_still_valid(
         | (CoreCommand::RenameTab, _)
         | (CoreCommand::CloseTab, _)
         | (CoreCommand::SplitPane(_), _)
+        | (CoreCommand::RenameFocusedPane, _)
         | (CoreCommand::ClosePane, _)
         | (CoreCommand::RunCommandInNewPane, _)
         | (CoreCommand::StartAgent, _) => false,
@@ -1759,6 +1765,7 @@ mod tests {
                 | CoreCommand::RenameTab
                 | CoreCommand::CloseTab
                 | CoreCommand::SplitPane(_)
+                | CoreCommand::RenameFocusedPane
                 | CoreCommand::ClosePane
                 | CoreCommand::RunCommandInNewPane
                 | CoreCommand::StartAgent => unreachable!("only retryable commands are tabled"),

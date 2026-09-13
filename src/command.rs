@@ -18,6 +18,7 @@ pub enum CoreCommand {
     FocusPane(Direction),
     SplitPane(SplitDirection),
     TogglePaneZoom,
+    RenameFocusedPane,
     ClosePane,
     RunCommandInNewPane,
     SwitchAgent,
@@ -26,7 +27,7 @@ pub enum CoreCommand {
     StartAgent,
 }
 
-const CORE_COMMANDS: [CoreCommand; 23] = [
+const CORE_COMMANDS: [CoreCommand; 24] = [
     CoreCommand::SwitchWorkspace,
     CoreCommand::CreateWorkspace,
     CoreCommand::RenameWorkspace,
@@ -44,6 +45,7 @@ const CORE_COMMANDS: [CoreCommand; 23] = [
     CoreCommand::SplitPane(SplitDirection::Right),
     CoreCommand::SplitPane(SplitDirection::Down),
     CoreCommand::TogglePaneZoom,
+    CoreCommand::RenameFocusedPane,
     CoreCommand::ClosePane,
     CoreCommand::RunCommandInNewPane,
     CoreCommand::SwitchAgent,
@@ -298,6 +300,7 @@ impl CoreCommand {
             Self::SplitPane(SplitDirection::Right) => "pane.split-right",
             Self::SplitPane(SplitDirection::Down) => "pane.split-down",
             Self::TogglePaneZoom => "pane.zoom-toggle",
+            Self::RenameFocusedPane => "pane.rename",
             Self::ClosePane => "pane.close",
             Self::RunCommandInNewPane => "pane.run",
             Self::SwitchAgent => "agent.switch",
@@ -455,6 +458,13 @@ impl CoreCommand {
                 &["maximize pane", "unzoom"],
                 10,
             ),
+            Self::RenameFocusedPane => (
+                "Rename focused pane",
+                "Rename the focused pane",
+                CommandCategory::Pane,
+                &["pane name", "rename current pane"],
+                20,
+            ),
             Self::ClosePane => (
                 "Close pane",
                 "Close the focused pane",
@@ -548,6 +558,7 @@ impl CoreCommand {
             Self::SplitPane(SplitDirection::Right) => focused_pane.is_some(),
             Self::SplitPane(SplitDirection::Down) => focused_pane.is_some(),
             Self::TogglePaneZoom => focused_pane.is_some(),
+            Self::RenameFocusedPane => focused_pane.is_some(),
             Self::ClosePane => focused_pane.is_some() && current_pane_count >= 2,
             Self::RunCommandInNewPane => focused_pane.is_some(),
             Self::SwitchAgent => runtime.session.agents.iter().any(|agent| !agent.focused),
@@ -681,6 +692,18 @@ impl CoreCommand {
                 TextRule::Trimmed,
             )],
             Self::TogglePaneZoom => Vec::new(),
+            Self::RenameFocusedPane => vec![ArgumentStep::text(
+                ArgumentKey::Label,
+                true,
+                runtime.focused_pane().and_then(|pane| {
+                    pane.label
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|label| !label.is_empty())
+                        .map(|label| ArgumentDefault::Value(label.to_owned()))
+                }),
+                TextRule::Trimmed,
+            )],
             Self::ClosePane => vec![ArgumentStep::confirm(format!(
                 "Close pane {}?",
                 runtime.focused_pane().map_or("", |pane| match &pane.label {
@@ -782,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn core_catalog_is_the_exact_twenty_three_item_contract() {
+    fn core_catalog_is_the_exact_twenty_four_item_contract() {
         let runtime = runtime(true);
         let expected = [
             (
@@ -949,6 +972,15 @@ mod tests {
                 &[][..],
             ),
             (
+                "pane.rename",
+                "Rename focused pane",
+                "Rename the focused pane",
+                CommandCategory::Pane,
+                &["pane name", "rename current pane"][..],
+                20,
+                &[(ArgumentKey::Label, ArgumentKind::Text, true)][..],
+            ),
+            (
                 "pane.close",
                 "Close pane",
                 "Close the focused pane",
@@ -1079,6 +1111,10 @@ mod tests {
             CoreCommand::ClosePane.spec(&runtime).unwrap().steps[0].prompt(),
             Some("Close pane agent?")
         );
+        assert_eq!(
+            CoreCommand::RenameFocusedPane.spec(&runtime).unwrap().steps[0].default(),
+            Some(&ArgumentDefault::Value("agent".into()))
+        );
         let run = CoreCommand::RunCommandInNewPane.spec(&runtime).unwrap();
         assert_eq!(
             run.steps[1].choices(),
@@ -1115,6 +1151,41 @@ mod tests {
                 .default(),
             Some(&ArgumentDefault::From(ArgumentKey::Kind))
         );
+    }
+
+    #[test]
+    fn rename_focused_pane_requires_a_pane_and_uses_only_its_custom_label() {
+        let runtime = runtime(true);
+        let rename = CoreCommand::RenameFocusedPane.spec(&runtime).unwrap();
+        assert_eq!(rename.steps[0].key(), ArgumentKey::Label);
+        assert!(rename.steps[0].optional());
+        assert_eq!(
+            rename.steps[0].default(),
+            Some(&ArgumentDefault::Value("agent".into()))
+        );
+
+        let mut unlabeled = runtime.clone();
+        let focused = unlabeled
+            .session
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == "pane-a")
+            .unwrap();
+        focused.label = None;
+        focused.terminal_title = Some("shell title".into());
+        focused.display_agent = Some("Claude".into());
+        assert_eq!(
+            CoreCommand::RenameFocusedPane
+                .spec(&unlabeled)
+                .unwrap()
+                .steps[0]
+                .default(),
+            None
+        );
+
+        let mut absent = runtime;
+        absent.session.focused_pane_id = None;
+        assert!(CoreCommand::RenameFocusedPane.spec(&absent).is_none());
     }
 
     #[test]
@@ -1221,6 +1292,7 @@ mod tests {
             vec![Some(ArgumentDefault::Value("/repo/main".into()))],
             vec![Some(ArgumentDefault::Value("/repo/main".into()))],
             vec![],
+            vec![Some(ArgumentDefault::Value("agent".into()))],
             vec![None],
             vec![None, Some(ArgumentDefault::Value("right".into()))],
             vec![None],
@@ -1251,7 +1323,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 true, true, true, true, true, true, false, true, true, false, false, true, false,
-                true, true, true, true, true, true, true, true, true, false,
+                true, true, true, true, true, true, true, true, true, true, false,
             ]
         );
 
@@ -1314,6 +1386,7 @@ mod tests {
             CoreCommand::RenameTab,
             CoreCommand::SplitPane(SplitDirection::Right),
             CoreCommand::TogglePaneZoom,
+            CoreCommand::RenameFocusedPane,
             CoreCommand::ClosePane,
             CoreCommand::RunCommandInNewPane,
         ] {
@@ -1341,6 +1414,12 @@ mod tests {
             Some("reviewer".into())
         );
         assert_eq!(rename_agent.normalize_text(" \t ").unwrap(), None);
+        let rename_pane = &CoreCommand::RenameFocusedPane.spec(&runtime).unwrap().steps[0];
+        assert_eq!(
+            rename_pane.normalize_text("  build logs  ").unwrap(),
+            Some("build logs".into())
+        );
+        assert_eq!(rename_pane.normalize_text(" \t ").unwrap(), None);
         let command = &CoreCommand::RunCommandInNewPane
             .spec(&runtime)
             .unwrap()
