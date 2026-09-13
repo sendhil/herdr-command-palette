@@ -471,6 +471,89 @@ fn validation_and_command_failure_keep_the_palette_state_visible() {
 }
 
 #[test]
+fn rename_focused_pane_form_prefills_renames_and_clears() {
+    let (client, trace) = FakeClient::new(CAPABLE, [Dispatch::Empty]);
+    let mut input = events("rename focused pane");
+    input.push(enter());
+    input.extend(replace_prefill("agent", "build logs"));
+    input.push(enter());
+    let mut saw_prefill = false;
+    run_app(client, input, |state, _, _| {
+        saw_prefill |= state
+            .active_text()
+            .is_some_and(|text| text.text() == "agent");
+    });
+    assert!(saw_prefill);
+    assert_eq!(
+        trace.borrow().operations,
+        [HerdrOperation::PaneRename {
+            pane_id: "pane-a".into(),
+            label: Some("build logs".into()),
+        }]
+    );
+
+    let (client, trace) = FakeClient::new(CAPABLE, [Dispatch::Empty]);
+    let mut clear = events("pane name");
+    clear.push(enter());
+    clear.extend(replace_prefill("agent", ""));
+    clear.push(enter());
+    run_app(client, clear, |_, _, _| {});
+    assert_eq!(
+        trace.borrow().operations,
+        [HerdrOperation::PaneRename {
+            pane_id: "pane-a".into(),
+            label: None,
+        }]
+    );
+}
+
+#[test]
+fn rename_focused_pane_failure_retains_submitted_label_and_visible_error() {
+    let (client, trace) = FakeClient::new(CAPABLE, [Dispatch::Failure("rename failed")]);
+    let mut input = events("rename focused pane");
+    input.push(enter());
+    input.extend(replace_prefill("agent", "build logs"));
+    input.push(enter());
+    input.push(esc());
+    input.push(esc());
+    let mut saw_failure = false;
+    run_app(client, input, |state, catalog, runtime| {
+        if state.error.as_deref() == Some("failed while running Herdr: rename failed")
+            && state
+                .active_text()
+                .is_some_and(|text| text.text() == "build logs")
+            && matches!(state.loading, LoadingState::Ready)
+        {
+            let backend = TestBackend::new(36, 12);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| herdr_command_palette::view::render(frame, state, catalog, runtime))
+                .unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(
+                rendered.contains("✗ failed while running Herdr: ren…"),
+                "{rendered:?}"
+            );
+            saw_failure = true;
+        }
+    });
+    assert!(saw_failure);
+    assert_eq!(
+        trace.borrow().operations,
+        [HerdrOperation::PaneRename {
+            pane_id: "pane-a".into(),
+            label: Some("build logs".into()),
+        }]
+    );
+}
+
+#[test]
 fn rename_focused_agent_form_prefills_renames_and_clears() {
     let (client, trace) = FakeClient::new(CAPABLE, [Dispatch::Empty]);
     let mut input = events("rename focused agent");

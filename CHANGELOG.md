@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- A focused-pane rename command that can assign or clear the pane's custom label
+  without changing its agent name.
+
 ## [0.1.1] - 2026-07-19
 
 ### Added

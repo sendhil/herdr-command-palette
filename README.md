@@ -8,7 +8,7 @@ workspace, tab, and agent search into one keyboard-first popup.
 - Search context-valid Herdr commands and installed plugin actions.
 - Search and focus live workspaces, tabs, and agents without retargeting stale
   results by name.
-- Rename the agent in the focused pane from the palette.
+- Rename the focused pane or the agent in it from the palette.
 - Keep input, rendering, subprocess output, retries, and polling bounded.
 
 ## Requirements and security model
@@ -117,6 +117,13 @@ An empty search shows scope hints. The palette keeps the snapshot captured when
 it opened. If a selected live target is stale, it refreshes once and retries
 only the same typed stable ID; it never chooses another result with the same
 label.
+
+## Focused-pane rename behavior
+
+`Rename focused pane` appears whenever the runtime snapshot has a focused pane.
+Its field starts with that pane's current custom label. Submit a nonempty value
+to rename that exact pane, or submit an empty field to clear its custom label.
+This is separate from the agent name managed by `Rename focused agent`.
 
 ## Focused-agent rename behavior
 
